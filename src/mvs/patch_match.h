@@ -137,6 +137,8 @@ struct PatchMatchOptions {
   // Whether to write the consistency graph.
   bool write_consistency_graph = false;
 
+  int channels = 32;
+
   void Print() const;
   bool Check() const {
     if (depth_min != -1.0f || depth_max != -1.0f) {

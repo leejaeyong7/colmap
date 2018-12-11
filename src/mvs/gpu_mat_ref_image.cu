@@ -39,9 +39,10 @@ namespace colmap {
 namespace mvs {
 namespace {
 
-texture<uint8_t, cudaTextureType2D, cudaReadModeNormalizedFloat> image_texture;
+// reference image texture is W x H x C float typed texture
+texture<float, cudaTextureType2DLayered> image_texture;
 
-__global__ void FilterKernel(GpuMat<uint8_t> image, GpuMat<float> sum_image,
+__global__ void FilterKernel(GpuMat<float> image, GpuMat<float> sum_image,
                              GpuMat<float> squared_sum_image,
                              const int window_radius, const int window_step,
                              const float sigma_spatial,
@@ -52,50 +53,57 @@ __global__ void FilterKernel(GpuMat<uint8_t> image, GpuMat<float> sum_image,
     return;
   }
 
-  BilateralWeightComputer bilateral_weight_computer(sigma_spatial, sigma_color);
+  const auto channel = image.GetChannel();
+  MultiChannelWeightComputer multi_channel_weight_computer_(sigma_spatial, sigma_color, channel);
+  const float * center_feature = tex2DLayered(image_texture, col, row);
 
-  const float center_color = tex2D(image_texture, col, row);
-
-  float color_sum = 0.0f;
-  float color_squared_sum = 0.0f;
+  float feature_sum[channel];
+  float feature_squared_sum[channel];
   float bilateral_weight_sum = 0.0f;
 
   for (int window_row = -window_radius; window_row <= window_radius;
        window_row += window_step) {
     for (int window_col = -window_radius; window_col <= window_radius;
          window_col += window_step) {
-      const float color =
-          tex2D(image_texture, col + window_col, row + window_row);
-      const float bilateral_weight = bilateral_weight_computer.Compute(
-          window_row, window_col, center_color, color);
-      color_sum += bilateral_weight * color;
-      color_squared_sum += bilateral_weight * color * color;
+      const float * feature= tex2DLayered(image_texture,
+                                          col + window_col,
+                                          row + window_row);
+      const float multi_channel_weight = multi_channel_weight_computer_.Compute(
+          window_row, window_col, center_feature, feature);
+      for(auto i = 0; i < channel; i++){
+        color_sum[i] += bilateral_weight * feature[i];
+        color_squared_sum[i] += bilateral_weight * feature[i] * feature[i];
+      }
       bilateral_weight_sum += bilateral_weight;
     }
   }
+  for(auto i = 0; i < channel; i++){
+    color_sum[i] /= bilateral_weight;
+    color_squared_sum[i] /= bilateral_weight;
+  }
 
-  color_sum /= bilateral_weight_sum;
-  color_squared_sum /= bilateral_weight_sum;
-
-  image.Set(row, col, static_cast<uint8_t>(255.0f * center_color));
-  sum_image.Set(row, col, color_sum);
-  squared_sum_image.Set(row, col, color_squared_sum);
+  image.SetSlice(row, col, center_feature);
+  sum_image.SetSlice(row, col, feature_sum);
+  squared_sum_image.SetSlice(row, col, feature_squared_sum);
 }
 
 }  // namespace
 
-GpuMatRefImage::GpuMatRefImage(const size_t width, const size_t height)
-    : height_(height), width_(width) {
-  image.reset(new GpuMat<uint8_t>(width, height));
-  sum_image.reset(new GpuMat<float>(width, height));
-  squared_sum_image.reset(new GpuMat<float>(width, height));
+// Adding Channel as input in constructor
+GpuMatRefImage::GpuMatRefImage(const size_t width, const size_t height,
+                               const size_t channel)
+    : height_(height), width_(width), channel_(channel){
+  image.reset(new GpuMat<float>(width, height, channel));
+  sum_image.reset(new GpuMat<float>(width, height, channel));
+  squared_sum_image.reset(new GpuMat<float>(width, height, channel));
 }
 
-void GpuMatRefImage::Filter(const uint8_t* image_data,
+void GpuMatRefImage::Filter(const float* image_data,
                             const size_t window_radius,
                             const size_t window_step, const float sigma_spatial,
                             const float sigma_color) {
-  CudaArrayWrapper<uint8_t> image_array(width_, height_, 1);
+  // adding channel as input
+  CudaArrayWrapper<float> image_array(width_, height_, channel_);
   image_array.CopyToDevice(image_data);
   image_texture.addressMode[0] = cudaAddressModeBorder;
   image_texture.addressMode[1] = cudaAddressModeBorder;

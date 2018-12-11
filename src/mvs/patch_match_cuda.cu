@@ -55,14 +55,11 @@
 
 namespace colmap {
 namespace mvs {
-
-texture<uint8_t, cudaTextureType2D, cudaReadModeNormalizedFloat>
-    ref_image_texture;
-texture<uint8_t, cudaTextureType2DLayered, cudaReadModeNormalizedFloat>
-    src_images_texture;
-texture<float, cudaTextureType2DLayered, cudaReadModeElementType>
-    src_depth_maps_texture;
-texture<float, cudaTextureType2D, cudaReadModeElementType> poses_texture;
+typedef texture <float, cudaTextureType2DLayered> feature_texture_t;
+feature_texture_t ref_image_texture;
+std::map<int, feature_texture_t> src_images_texture;
+texture<float, cudaTextureType2DLayered> src_depth_maps_texture;
+texture<float, cudaTextureType2D> poses_texture;
 
 // Calibration of reference image as {fx, cx, fy, cy}.
 __constant__ float ref_K[4];
@@ -316,23 +313,23 @@ __device__ inline void ComposeHomography(const int image_idx, const int row,
 
 // The return values is 1 - NCC, so the range is [0, 2], the smaller the
 // value, the better the color consistency.
-template <int kWindowSize, int kWindowStep>
+template <int kWindowSize, int kWindowStep, int kChannel>
 struct PhotoConsistencyCostComputer {
   const int kWindowRadius = kWindowSize / 2;
 
   __device__ PhotoConsistencyCostComputer(const float sigma_spatial,
-                                          const float sigma_color)
-      : bilateral_weight_computer_(sigma_spatial, sigma_color) {}
+                                          const float sigma_feature)
+      : multi_channel_weight_computer_(sigma_spatial, sigma_feature) {}
 
   // Maximum photo consistency cost as 1 - min(NCC).
   const float kMaxCost = 2.0f;
 
   // Image data in local window around patch.
-  const float* local_ref_image = nullptr;
+  float (*local_ref_image)[kChannel] = nullptr;
 
-  // Precomputed sum of raw and squared image intensities.
-  float local_ref_sum = 0.0f;
-  float local_ref_squared_sum = 0.0f;
+  // Precomputed array of sum of raw and squared image intensities.
+  // float local_ref_sum[num_channels];
+  // float local_ref_squared_sum[num_channels];
 
   // Index of source image.
   int src_image_idx = -1;
@@ -368,34 +365,47 @@ struct PhotoConsistencyCostComputer {
     int ref_image_idx = THREADS_PER_BLOCK - kWindowRadius + thread_id;
     int ref_image_base_idx = ref_image_idx;
 
-    const float ref_center_color =
-        local_ref_image[ref_image_idx + kWindowRadius * 3 * THREADS_PER_BLOCK +
-                        kWindowRadius];
-    const float ref_color_sum = local_ref_sum;
-    const float ref_color_squared_sum = local_ref_squared_sum;
-    float src_color_sum = 0.0f;
-    float src_color_squared_sum = 0.0f;
-    float src_ref_color_sum = 0.0f;
-    float bilateral_weight_sum = 0.0f;
+    // const float * ref_center_feature =
+    //     local_ref_image[ref_image_idx + kWindowRadius * 3 * THREADS_PER_BLOCK +
+    //                     kWindowRadius];
+    // const float * ref_color_sum = local_ref_sum;
+    // const float * ref_color_squared_sum = local_ref_squared_sum;
+    // float src_color_sum = 0.0f;
+    // float src_color_squared_sum = 0.0f;
+    // float src_ref_color_sum = 0.0f;
+    // float bilateral_weight_sum = 0.0f;
+
+    float cov_feature_sum = 0.0f;
+    float ref_feature_sq_sum = 0.0f;
+    float src_feature_sq_sum = 0.0f;
+    float total_pixels= 0.0f;
 
     for (int row = -kWindowRadius; row <= kWindowRadius; row += kWindowStep) {
       for (int col = -kWindowRadius; col <= kWindowRadius; col += kWindowStep) {
         const float inv_z = 1.0f / z;
         const float norm_col_src = inv_z * col_src + 0.5f;
         const float norm_row_src = inv_z * row_src + 0.5f;
-        const float ref_color = local_ref_image[ref_image_idx];
-        const float src_color = tex2DLayered(src_images_texture, norm_col_src,
-                                             norm_row_src, src_image_idx);
+        const float * ref_feature = local_ref_image[ref_image_idx];
+        auto src_image_texture = src_images_texture.find(src_image_idx)->second;
+        const float * src_feature = tex2DLayered(src_image_texture, norm_col_src,
+                                                 norm_row_src);
+        for(int c = 0; c < kChannel; c++){
+          cov_feature_sum += ref_feature[c] * src_feature[c];
+          ref_feature_sq_sum += ref_feature[c] * ref_feature[c];
+          src_feature_sq_sum += src_feature[c] * src_feature[c];
+        }
+        total_pixels += 1;
 
-        const float bilateral_weight = bilateral_weight_computer_.Compute(
-            row, col, ref_center_color, ref_color);
 
-        const float bilateral_weight_src = bilateral_weight * src_color;
+        // const float bilateral_weight = multi_channel_weight_computer_.Compute(
+        //     row, col, ref_center_feature, ref_feature, num_channels);
 
-        src_color_sum += bilateral_weight_src;
-        src_color_squared_sum += bilateral_weight_src * src_color;
-        src_ref_color_sum += bilateral_weight_src * ref_color;
-        bilateral_weight_sum += bilateral_weight;
+        // const float bilateral_weight_src = bilateral_weight * src_color;
+
+        // src_color_sum += bilateral_weight_src;
+        // src_color_squared_sum += bilateral_weight_src * src_color;
+        // src_ref_color_sum += bilateral_weight_src * ref_color;
+        // bilateral_weight_sum += bilateral_weight;
 
         ref_image_idx += kWindowStep;
 
@@ -419,33 +429,34 @@ struct PhotoConsistencyCostComputer {
       row_src = base_row_src;
       z = base_z;
     }
+    float covar = cov_feature_sum / (sqrt(src_feature_sq_sum) * sqrt(ref_feature_sq_sum));
+    return max(0.0f, 1.0f - covar);
+    // const float inv_bilateral_weight_sum = 1.0f / bilateral_weight_sum;
+    // src_color_sum *= inv_bilateral_weight_sum;
+    // src_color_squared_sum *= inv_bilateral_weight_sum;
+    // src_ref_color_sum *= inv_bilateral_weight_sum;
 
-    const float inv_bilateral_weight_sum = 1.0f / bilateral_weight_sum;
-    src_color_sum *= inv_bilateral_weight_sum;
-    src_color_squared_sum *= inv_bilateral_weight_sum;
-    src_ref_color_sum *= inv_bilateral_weight_sum;
-
-    const float ref_color_var =
-        ref_color_squared_sum - ref_color_sum * ref_color_sum;
-    const float src_color_var =
-        src_color_squared_sum - src_color_sum * src_color_sum;
+    // const float ref_color_var =
+    //     ref_color_squared_sum - ref_color_sum * ref_color_sum;
+    // const float src_color_var =
+    //     src_color_squared_sum - src_color_sum * src_color_sum;
 
     // Based on Jensen's Inequality for convex functions, the variance
     // should always be larger than 0. Do not make this threshold smaller.
-    const float kMinVar = 1e-5f;
-    if (ref_color_var < kMinVar || src_color_var < kMinVar) {
-      return kMaxCost;
-    } else {
-      const float src_ref_color_covar =
-          src_ref_color_sum - ref_color_sum * src_color_sum;
-      const float src_ref_color_var = sqrt(ref_color_var * src_color_var);
-      return max(0.0f,
-                 min(kMaxCost, 1.0f - src_ref_color_covar / src_ref_color_var));
-    }
+    // const float kMinVar = 1e-5f;
+    // if (ref_color_var < kMinVar || src_color_var < kMinVar) {
+    //   return kMaxCost;
+    // } else {
+    //   const float src_ref_color_covar =
+    //       src_ref_color_sum - ref_color_sum * src_color_sum;
+    //   const float src_ref_color_var = sqrt(ref_color_var * src_color_var);
+    //   return max(0.0f,
+    //              min(kMaxCost, 1.0f - src_ref_color_covar / src_ref_color_var));
+    // }
   }
 
  private:
-  const BilateralWeightComputer bilateral_weight_computer_;
+  const MultiChannelWeightComputer multi_channel_weight_computer_;
 };
 
 __device__ inline float ComputeGeomConsistencyCost(const float row,
@@ -527,8 +538,8 @@ __device__ inline int FindMinCost(const float costs[kNumCosts]) {
   return min_cost_idx;
 }
 
-template <int kWindowSize>
-__device__ inline void ReadRefImageIntoSharedMemory(float* local_image,
+template <int kWindowSize, int kChannel>
+__device__ inline void ReadRefImageIntoSharedMemory(float local_image[][],
                                                     const int row,
                                                     const int col,
                                                     const int thread_id) {
@@ -545,7 +556,7 @@ __device__ inline void ReadRefImageIntoSharedMemory(float* local_image,
 #pragma unroll
       for (int j = 0; j < 3; ++j) {
         local_image[thread_id + i * 3 * THREADS_PER_BLOCK +
-                    j * THREADS_PER_BLOCK] = tex2D(ref_image_texture, c, r);
+                    j * THREADS_PER_BLOCK] = tex2DLayered(ref_image_texture, c, r);
         c += THREADS_PER_BLOCK;
       }
       r += 1;
@@ -569,7 +580,7 @@ __device__ inline void ReadRefImageIntoSharedMemory(float* local_image,
 #pragma unroll
     for (int j = 0; j < 3; ++j) {
       local_image[thread_id + i * 3 * THREADS_PER_BLOCK +
-                  j * THREADS_PER_BLOCK] = tex2D(ref_image_texture, c, r);
+                  j * THREADS_PER_BLOCK] = tex2DLayered(ref_image_texture, c, r);
       c += THREADS_PER_BLOCK;
     }
   }
@@ -757,21 +768,21 @@ __global__ void RotateNormalMap(GpuMat<float> normal_map) {
   }
 }
 
-template <int kWindowSize, int kWindowStep>
+template <int kWindowSize, int kWindowStep, int kChannel>
 __global__ void ComputeInitialCost(GpuMat<float> cost_map,
                                    const GpuMat<float> depth_map,
                                    const GpuMat<float> normal_map,
                                    const GpuMat<float> ref_sum_image,
                                    const GpuMat<float> ref_squared_sum_image,
                                    const float sigma_spatial,
-                                   const float sigma_color) {
+                                   const float sigma_feature) {
   const int thread_id = threadIdx.x;
   const int col = blockDim.x * blockIdx.x + threadIdx.x;
 
-  __shared__ float local_ref_image[THREADS_PER_BLOCK * 3 * kWindowSize];
+  __shared__ float local_ref_image[THREADS_PER_BLOCK * 3 * kWindowSize][kChannel];
 
-  PhotoConsistencyCostComputer<kWindowSize, kWindowStep> pcc_computer(
-      sigma_spatial, sigma_color);
+  PhotoConsistencyCostComputer<kWindowSize, kWindowStep, kChannel> pcc_computer(
+      sigma_spatial, sigma_feature);
   pcc_computer.local_ref_image = local_ref_image;
   pcc_computer.row = 0;
   pcc_computer.col = col;
@@ -782,15 +793,15 @@ __global__ void ComputeInitialCost(GpuMat<float> cost_map,
   for (int row = 0; row < cost_map.GetHeight(); ++row) {
     // Note that this must be executed even for pixels outside the borders,
     // since pixels are used in the local neighborhood of the current pixel.
-    ReadRefImageIntoSharedMemory<kWindowSize>(local_ref_image, row, col,
+    ReadRefImageIntoSharedMemory<kWindowSize, kChannel>(local_ref_image, row, col,
                                               thread_id);
 
     if (col < cost_map.GetWidth()) {
       pcc_computer.depth = depth_map.Get(row, col);
       normal_map.GetSlice(row, col, normal);
 
-      pcc_computer.local_ref_sum = ref_sum_image.Get(row, col);
-      pcc_computer.local_ref_squared_sum = ref_squared_sum_image.Get(row, col);
+      // pcc_computer.local_ref_sum = ref_sum_image.GetSlice(row, col);
+      // pcc_computer.local_ref_squared_sum = ref_squared_sum_image.GetSlice(row, col);
 
       for (int image_idx = 0; image_idx < cost_map.GetDepth(); ++image_idx) {
         pcc_computer.src_image_idx = image_idx;
@@ -821,7 +832,8 @@ struct SweepOptions {
   float filter_geom_consistency_max_cost = 1.0f;
 };
 
-template <int kWindowSize, int kWindowStep, bool kGeomConsistencyTerm = false,
+template <int kWindowSize, int kWindowStep, int kChannel, 
+          bool kGeomConsistencyTerm = false,
           bool kFilterPhotoConsistency = false,
           bool kFilterGeomConsistency = false>
 __global__ void SweepFromTopToBottom(
@@ -876,9 +888,11 @@ __global__ void SweepFromTopToBottom(
   // Contains 3 vertical stripes of height kWindowSize, that are reused within
   // one warp for NCC computation. Note that this limits the maximum window
   // size to 2 * THREADS_PER_BLOCK + 1.
-  __shared__ float local_ref_image[THREADS_PER_BLOCK * 3 * kWindowSize];
 
-  PhotoConsistencyCostComputer<kWindowSize, kWindowStep> pcc_computer(
+  // adding channel in local_ref_image
+  __shared__ float local_ref_image[THREADS_PER_BLOCK * 3 * kWindowSize][kChannel];
+
+  PhotoConsistencyCostComputer<kWindowSize, kWindowStep, kChannel> pcc_computer(
       options.sigma_spatial, options.sigma_color);
   pcc_computer.local_ref_image = local_ref_image;
   pcc_computer.col = col;
@@ -908,7 +922,7 @@ __global__ void SweepFromTopToBottom(
   for (int row = 0; row < cost_map.GetHeight(); ++row) {
     // Note that this must be executed even for pixels outside the borders,
     // since pixels are used in the local neighborhood of the current pixel.
-    ReadRefImageIntoSharedMemory<kWindowSize>(local_ref_image, row, col,
+    ReadRefImageIntoSharedMemory<kWindowSize, kChannel>(local_ref_image, row, col,
                                               thread_id);
 
     if (col >= cost_map.GetWidth()) {
@@ -916,8 +930,9 @@ __global__ void SweepFromTopToBottom(
     }
 
     pcc_computer.row = row;
-    pcc_computer.local_ref_sum = ref_sum_image.Get(row, col);
-    pcc_computer.local_ref_squared_sum = ref_squared_sum_image.Get(row, col);
+    // float * ref_sum_image_feature = ref_sum_image.GetSlice(row, col);
+    // pcc_computer.local_ref_sum = ref_sum_image.GetSlice(row, col);
+    // pcc_computer.local_ref_squared_sum = ref_squared_sum_image.GetSlice(row, col);
 
     // Propagate the depth at which the current ray intersects with the plane
     // of the normal of the previous ray. This helps to better estimate
@@ -1138,6 +1153,7 @@ PatchMatchCuda::PatchMatchCuda(const PatchMatchOptions& options,
       problem_(problem),
       ref_width_(0),
       ref_height_(0),
+      ref_channel_(32),
       rotation_in_half_pi_(0) {
   SetBestCudaDevice(std::stoi(options_.gpu_index));
   InitRefImage();
@@ -1153,34 +1169,46 @@ PatchMatchCuda::~PatchMatchCuda() {
 }
 
 void PatchMatchCuda::Run() {
-#define CASE_WINDOW_RADIUS(window_radius, window_step)              \
-  case window_radius:                                               \
-    RunWithWindowSizeAndStep<2 * window_radius + 1, window_step>(); \
+#define CASE_WINDOW_RADIUS(window_radius, window_step, channels)              \
+  case window_radius:                                                         \
+    switch(channels){                                                \
+      case 16:                                                                \
+      RunWithWindowSizeAndStep<2 * window_radius + 1, window_step, 16>();     \
+      break;                                                                  \
+      case 32:                                                                \
+      RunWithWindowSizeAndStep<2 * window_radius + 1, window_step, 32>();     \
+      case 64:                                                                \
+      RunWithWindowSizeAndStep<2 * window_radius + 1, window_step, 64>();     \
+      break;                                                                  \
+      default:                                                                \
+      std::cerr << "Error: Channel size not supported" << std::endl;          \
+      break;                                                                  \
+    }                                                                         \
     break;
 
 #define CASE_WINDOW_STEP(window_step)                                 \
   case window_step:                                                   \
     switch (options_.window_radius) {                                 \
-      CASE_WINDOW_RADIUS(1, window_step)                              \
-      CASE_WINDOW_RADIUS(2, window_step)                              \
-      CASE_WINDOW_RADIUS(3, window_step)                              \
-      CASE_WINDOW_RADIUS(4, window_step)                              \
-      CASE_WINDOW_RADIUS(5, window_step)                              \
-      CASE_WINDOW_RADIUS(6, window_step)                              \
-      CASE_WINDOW_RADIUS(7, window_step)                              \
-      CASE_WINDOW_RADIUS(8, window_step)                              \
-      CASE_WINDOW_RADIUS(9, window_step)                              \
-      CASE_WINDOW_RADIUS(10, window_step)                             \
-      CASE_WINDOW_RADIUS(11, window_step)                             \
-      CASE_WINDOW_RADIUS(12, window_step)                             \
-      CASE_WINDOW_RADIUS(13, window_step)                             \
-      CASE_WINDOW_RADIUS(14, window_step)                             \
-      CASE_WINDOW_RADIUS(15, window_step)                             \
-      CASE_WINDOW_RADIUS(16, window_step)                             \
-      CASE_WINDOW_RADIUS(17, window_step)                             \
-      CASE_WINDOW_RADIUS(18, window_step)                             \
-      CASE_WINDOW_RADIUS(19, window_step)                             \
-      CASE_WINDOW_RADIUS(20, window_step)                             \
+      CASE_WINDOW_RADIUS(1, window_step, options_.channels)           \
+      CASE_WINDOW_RADIUS(2, window_step, options_.channels)           \
+      CASE_WINDOW_RADIUS(3, window_step, options_.channels)           \
+      CASE_WINDOW_RADIUS(4, window_step, options_.channels)           \
+      CASE_WINDOW_RADIUS(5, window_step, options_.channels)           \
+      CASE_WINDOW_RADIUS(6, window_step, options_.channels)           \
+      CASE_WINDOW_RADIUS(7, window_step, options_.channels)           \
+      CASE_WINDOW_RADIUS(8, window_step, options_.channels)           \
+      CASE_WINDOW_RADIUS(9, window_step, options_.channels)           \
+      CASE_WINDOW_RADIUS(10, window_step, options_.channels)          \
+      CASE_WINDOW_RADIUS(11, window_step, options_.channels)          \
+      CASE_WINDOW_RADIUS(12, window_step, options_.channels)          \
+      CASE_WINDOW_RADIUS(13, window_step, options_.channels)          \
+      CASE_WINDOW_RADIUS(14, window_step, options_.channels)          \
+      CASE_WINDOW_RADIUS(15, window_step, options_.channels)          \
+      CASE_WINDOW_RADIUS(16, window_step, options_.channels)          \
+      CASE_WINDOW_RADIUS(17, window_step, options_.channels)          \
+      CASE_WINDOW_RADIUS(18, window_step, options_.channels)          \
+      CASE_WINDOW_RADIUS(19, window_step, options_.channels)          \
+      CASE_WINDOW_RADIUS(20, window_step, options_.channels)          \
       default: {                                                      \
         std::cerr << "Error: Window size not supported" << std::endl; \
         break;                                                        \
@@ -1240,7 +1268,7 @@ std::vector<int> PatchMatchCuda::GetConsistentImageIdxs() const {
   return consistent_image_idxs;
 }
 
-template <int kWindowSize, int kWindowStep>
+template <int kWindowSize, int kWindowStep, int kChannel>
 void PatchMatchCuda::RunWithWindowSizeAndStep() {
   // Wait for all initializations to finish.
   CUDA_SYNC_AND_CHECK();
@@ -1249,7 +1277,7 @@ void PatchMatchCuda::RunWithWindowSizeAndStep() {
   CudaTimer init_timer;
 
   ComputeCudaConfig();
-  ComputeInitialCost<kWindowSize, kWindowStep>
+  ComputeInitialCost<kWindowSize, kWindowStep, kChannel>
       <<<sweep_grid_size_, sweep_block_size_>>>(
           *cost_map_, *depth_map_, *normal_map_, *ref_image_->sum_image,
           *ref_image_->squared_sum_image, options_.sigma_spatial,
@@ -1296,7 +1324,8 @@ void PatchMatchCuda::RunWithWindowSizeAndStep() {
       const bool last_sweep = iter == options_.num_iterations - 1 && sweep == 3;
 
 #define CALL_SWEEP_FUNC                                                  \
-  SweepFromTopToBottom<kWindowSize, kWindowStep, kGeomConsistencyTerm,   \
+  SweepFromTopToBottom<kWindowSize, kWindowStep, kChannel,               \
+                       kGeomConsistencyTerm,                             \
                        kFilterPhotoConsistency, kFilterGeomConsistency>  \
       <<<sweep_grid_size_, sweep_block_size_>>>(                         \
           *global_workspace_, *rand_state_map_, *cost_map_, *depth_map_, \
@@ -1392,17 +1421,19 @@ void PatchMatchCuda::InitRefImage() {
 
   ref_width_ = ref_image.GetWidth();
   ref_height_ = ref_image.GetHeight();
+  //adding channel information
+  ref_channel_ = ref_image.GetChannel();
 
   // Upload to device.
-  ref_image_.reset(new GpuMatRefImage(ref_width_, ref_height_));
-  const std::vector<uint8_t> ref_image_array =
-      ref_image.GetBitmap().ConvertToRowMajorArray();
+  ref_image_.reset(new GpuMatRefImage(ref_width_, ref_height_, ref_channel_));
+  const std::vector<float> ref_image_array =
+      ref_image.GetData().ConvertToRowMajorArray();
   ref_image_->Filter(ref_image_array.data(), options_.window_radius,
                      options_.window_step, options_.sigma_spatial,
                      options_.sigma_color);
 
   ref_image_device_.reset(
-      new CudaArrayWrapper<uint8_t>(ref_width_, ref_height_, 1));
+      new CudaArrayWrapper<float>(ref_width_, ref_height_, ref_channel_));
   ref_image_device_->CopyFromGpuMat(*ref_image_->image);
 
   // Create texture.
@@ -1416,50 +1447,39 @@ void PatchMatchCuda::InitRefImage() {
 }
 
 void PatchMatchCuda::InitSourceImages() {
-  // Determine maximum image size.
-  size_t max_width = 0;
-  size_t max_height = 0;
-  for (const auto image_idx : problem_.src_image_idxs) {
-    const Image& image = problem_.images->at(image_idx);
-    if (image.GetWidth() > max_width) {
-      max_width = image.GetWidth();
-    }
-    if (image.GetHeight() > max_height) {
-      max_height = image.GetHeight();
-    }
-  }
+  // TODO: clear all existingsrc textures
+  float max_width = 0.0f;
+  float max_height = 0.0f;
+  for(const auto image_idx:problem_.src_image_idxs){
+    const Image& src_image = problem_.images->at(image_idx);
 
-  // Upload source images to device.
-  {
-    // Copy source images to contiguous memory block.
-    const uint8_t kDefaultValue = 0;
-    std::vector<uint8_t> src_images_host_data(
-        static_cast<size_t>(max_width * max_height *
-                            problem_.src_image_idxs.size()),
-        kDefaultValue);
-    for (size_t i = 0; i < problem_.src_image_idxs.size(); ++i) {
-      const Image& image = problem_.images->at(problem_.src_image_idxs[i]);
-      const Bitmap& bitmap = image.GetBitmap();
-      uint8_t* dest = src_images_host_data.data() + max_width * max_height * i;
-      for (size_t r = 0; r < image.GetHeight(); ++r) {
-        memcpy(dest, bitmap.GetScanline(r), image.GetWidth() * sizeof(uint8_t));
-        dest += max_width;
-      }
-    }
+    const size_t src_width_ = src_image.GetWidth();
+    const size_t src_height_ = src_image.GetHeight();
+    max_width = max((float)src_width_, max_width);
+    max_height = max((float)src_height_, max_height);
+    //adding channel information
+    const size_t src_channel_ = src_image.GetChannel();
 
     // Upload to device.
-    src_images_device_.reset(new CudaArrayWrapper<uint8_t>(
-        max_width, max_height, problem_.src_image_idxs.size()));
-    src_images_device_->CopyToDevice(src_images_host_data.data());
+    std::unique_ptr<CudaArrayWrapper<float>> src_image_device_;
+    src_image_device_.reset(
+      new CudaArrayWrapper<float>(src_width_, src_height_, src_channel_));
 
-    // Create source images texture.
-    src_images_texture.addressMode[0] = cudaAddressModeBorder;
-    src_images_texture.addressMode[1] = cudaAddressModeBorder;
-    src_images_texture.addressMode[2] = cudaAddressModeBorder;
-    src_images_texture.filterMode = cudaFilterModeLinear;
-    src_images_texture.normalized = false;
-    CUDA_SAFE_CALL(cudaBindTextureToArray(src_images_texture,
-                                          src_images_device_->GetPtr()));
+    // create image array
+    const std::vector<float> src_image_array =
+     src_image.GetData().ConvertToRowMajorArray();
+    src_image_device_->CopyToDevice(src_image_array.data());
+
+    // Create texture.
+    feature_texture_t src_image_texture;
+    src_image_texture.addressMode[0] = cudaAddressModeBorder;
+    src_image_texture.addressMode[1] = cudaAddressModeBorder;
+    src_image_texture.addressMode[2] = cudaAddressModeBorder;
+    src_image_texture.filterMode = cudaFilterModePoint;
+    src_image_texture.normalized = false;
+    CUDA_SAFE_CALL(
+      cudaBindTextureToArray(src_image_texture, src_image_device_->GetPtr()));
+    src_images_texture.insert(std::pair<int, feature_texture_t>(image_idx, src_image_texture));
   }
 
   // Upload source depth maps to device.
@@ -1661,6 +1681,7 @@ void PatchMatchCuda::Rotate() {
 
   size_t width;
   size_t height;
+  size_t channel = ref_channel_;
   if (rotation_in_half_pi_ % 2 == 0) {
     width = ref_width_;
     height = ref_height_;
@@ -1698,7 +1719,7 @@ void PatchMatchCuda::Rotate() {
   // Rotate reference image.
   {
     std::unique_ptr<GpuMatRefImage> rotated_ref_image(
-        new GpuMatRefImage(width, height));
+        new GpuMatRefImage(width, height, channel));
     ref_image_->image->Rotate(rotated_ref_image->image.get());
     ref_image_->sum_image->Rotate(rotated_ref_image->sum_image.get());
     ref_image_->squared_sum_image->Rotate(
@@ -1707,7 +1728,7 @@ void PatchMatchCuda::Rotate() {
   }
 
   // Bind rotated reference image to texture.
-  ref_image_device_.reset(new CudaArrayWrapper<uint8_t>(width, height, 1));
+  ref_image_device_.reset(new CudaArrayWrapper<float>(width, height, channel));
   ref_image_device_->CopyFromGpuMat(*ref_image_->image);
   CUDA_SAFE_CALL(cudaUnbindTexture(ref_image_texture));
   CUDA_SAFE_CALL(

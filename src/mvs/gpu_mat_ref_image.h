@@ -42,17 +42,17 @@ namespace mvs {
 
 class GpuMatRefImage {
  public:
-  GpuMatRefImage(const size_t width, const size_t height);
+  GpuMatRefImage(const size_t width, const size_t height, const size_t channel);
 
   // Filter image using sum convolution kernel to compute local sum of
   // intensities. The filtered images can then be used for repeated, efficient
   // NCC computation.
-  void Filter(const uint8_t* image_data, const size_t window_radius,
+  void Filter(const float * image_data, const size_t window_radius,
               const size_t window_step, const float sigma_spatial,
               const float sigma_color);
 
-  // Image intensities.
-  std::unique_ptr<GpuMat<uint8_t>> image;
+  // Image features.
+  std::unique_ptr<GpuMat<float>> image;
 
   // Local sum of image intensities.
   std::unique_ptr<GpuMat<float>> sum_image;
@@ -66,27 +66,41 @@ class GpuMatRefImage {
 
   size_t width_;
   size_t height_;
+  size_t channel_;
 };
 
-struct BilateralWeightComputer {
-  __device__ BilateralWeightComputer(const float sigma_spatial,
-                                     const float sigma_color)
+
+
+/**
+ * Computes
+ */
+struct MultiChannelWeightComputer {
+  __device__ MultiChannelWeightComputer(const float sigma_spatial,
+                                        const float sigma_feature)
       : spatial_normalization_(1.0f / (2.0f * sigma_spatial * sigma_spatial)),
-        color_normalization_(1.0f / (2.0f * sigma_color * sigma_color)) {}
+        feature_normalization_(1.0f / (2.0f * sigma_feature* sigma_feature)) {}
 
   __device__ inline float Compute(const float row_diff, const float col_diff,
-                                  const float color1,
-                                  const float color2) const {
+                                  const float * ref_feature,
+                                  const float * src_feature, 
+                                  const uint8_t num_channels) const {
+
     const float spatial_dist_squared =
         row_diff * row_diff + col_diff * col_diff;
-    const float color_dist = color1 - color2;
+
+    float feature_dist_sq = 0.0f;
+    for(auto i = 0; i < num_channels; i++){
+      auto diff = ref_feature[i] + src_feature[i];
+      feature_dist_sq += diff*diff;
+    }
+
     return exp(-spatial_dist_squared * spatial_normalization_ -
-               color_dist * color_dist * color_normalization_);
+               feature_dist_sq * feature_normalization_);
   }
 
  private:
   const float spatial_normalization_;
-  const float color_normalization_;
+  const float feature_normalization_;
 };
 
 }  // namespace mvs
