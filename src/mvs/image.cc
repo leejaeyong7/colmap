@@ -41,12 +41,15 @@ namespace mvs {
 
 Image::Image() {}
 
-Image::Image(const std::string& path, const size_t width, const size_t height,
+Image::Image(const std::string& path, 
+             const std::string& feature_path,
+             const size_t width, const size_t height,
              const float* K, const float* R, const float* T)
-    : path_(path), width_(width), height_(height) {
+    : path_(path), feature_path_(feature_path), width_(width), height_(height) {
   memcpy(K_, K, 9 * sizeof(float));
   memcpy(R_, R, 9 * sizeof(float));
   memcpy(T_, T, 3 * sizeof(float));
+  channel_ = 3;
   ComposeProjectionMatrix(K_, R_, T_, P_);
   ComposeInverseProjectionMatrix(K_, R_, T_, inv_P_);
 }
@@ -57,6 +60,12 @@ void Image::SetBitmap(const Bitmap& bitmap) {
   CHECK_EQ(height_, bitmap_.Height());
 }
 
+void Image::SetFeature(const CNNFeature& feature) {
+  feature_ = feature;
+  CHECK_EQ(width_, feature_.Width());
+  CHECK_EQ(height_, feature_.Height());
+}
+
 void Image::Rescale(const float factor) { Rescale(factor, factor); }
 
 void Image::Rescale(const float factor_x, const float factor_y) {
@@ -65,6 +74,9 @@ void Image::Rescale(const float factor_x, const float factor_y) {
 
   if (bitmap_.Data() != nullptr) {
     bitmap_.Rescale(new_width, new_height);
+  }
+  if (feature_.Data() != nullptr){
+    feature_.Rescale(new_width, new_height);
   }
 
   const float scale_x = new_width / static_cast<float>(width_);

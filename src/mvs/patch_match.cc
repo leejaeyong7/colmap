@@ -484,6 +484,7 @@ void PatchMatchController::ProcessProblem(const PatchMatchOptions& options,
     std::cout << "Reading inputs..." << std::endl;
     for (const auto image_idx : used_image_idxs) {
       images.at(image_idx).SetBitmap(workspace_->GetBitmap(image_idx));
+      images.at(image_idx).SetFeature(workspace_->GetFeature(image_idx));
       if (options.geom_consistency) {
         depth_maps.at(image_idx) = workspace_->GetDepthMap(image_idx);
         normal_maps.at(image_idx) = workspace_->GetNormalMap(image_idx);

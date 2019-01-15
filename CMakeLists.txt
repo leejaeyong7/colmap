@@ -306,6 +306,7 @@ set(COLMAP_INTERNAL_LIBRARIES
     sqlite3
     sift_gpu
     vlfeat
+    cnpy
 )
 
 if(CUDA_ENABLED)

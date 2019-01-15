@@ -43,6 +43,7 @@ Workspace::CachedImage::CachedImage() {}
 Workspace::CachedImage::CachedImage(CachedImage&& other) {
   num_bytes = other.num_bytes;
   bitmap = std::move(other.bitmap);
+  feature = std::move(other.feature);
   depth_map = std::move(other.depth_map);
   normal_map = std::move(other.normal_map);
 }
@@ -51,6 +52,7 @@ Workspace::CachedImage& Workspace::CachedImage::operator=(CachedImage&& other) {
   if (this != &other) {
     num_bytes = other.num_bytes;
     bitmap = std::move(other.bitmap);
+    feature = std::move(other.feature);
     depth_map = std::move(other.depth_map);
     normal_map = std::move(other.normal_map);
   }
@@ -82,6 +84,21 @@ void Workspace::ClearCache() { cache_.Clear(); }
 const Workspace::Options& Workspace::GetOptions() const { return options_; }
 
 const Model& Workspace::GetModel() const { return model_; }
+
+const CNNFeature& Workspace::GetFeature(const int image_idx) {
+  auto& cached_image = cache_.GetMutable(image_idx);
+  if (!cached_image.feature) {
+    cached_image.feature.reset(new CNNFeature());
+    cached_image.feature->Read(GetFeaturePath(image_idx));
+    if (options_.max_image_size > 0) {
+      cached_image.feature->Rescale(model_.images.at(image_idx).GetWidth(),
+                                   model_.images.at(image_idx).GetHeight());
+    }
+    cached_image.num_bytes += cached_image.feature->NumBytes();
+    cache_.UpdateNumBytes(image_idx);
+  }
+  return *cached_image.feature;
+}
 
 const Bitmap& Workspace::GetBitmap(const int image_idx) {
   auto& cached_image = cache_.GetMutable(image_idx);
@@ -133,6 +150,12 @@ std::string Workspace::GetBitmapPath(const int image_idx) const {
   return model_.images.at(image_idx).GetPath();
 }
 
+
+std::string Workspace::GetFeaturePath(const int image_idx) const {
+  return model_.images.at(image_idx).GetFeaturePath();
+}
+
+
 std::string Workspace::GetDepthMapPath(const int image_idx) const {
   return depth_map_path_ + GetFileName(image_idx);
 }
@@ -143,6 +166,10 @@ std::string Workspace::GetNormalMapPath(const int image_idx) const {
 
 bool Workspace::HasBitmap(const int image_idx) const {
   return ExistsFile(GetBitmapPath(image_idx));
+}
+
+bool Workspace::HasFeature(const int image_idx) const {
+  return ExistsFile(GetFeaturePath(image_idx));
 }
 
 bool Workspace::HasDepthMap(const int image_idx) const {

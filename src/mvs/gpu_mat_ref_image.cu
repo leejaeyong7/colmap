@@ -41,7 +41,6 @@ namespace {
 
 // reference image texture is W x H x C float typed texture
 texture<float, cudaTextureType2DLayered> image_texture;
-
 __global__ void FilterKernel(GpuMat<float> image, GpuMat<float> sum_image,
                              GpuMat<float> squared_sum_image,
                              const int window_radius, const int window_step,
@@ -52,39 +51,45 @@ __global__ void FilterKernel(GpuMat<float> image, GpuMat<float> sum_image,
   if (row >= image.GetHeight() || col >= image.GetWidth()) {
     return;
   }
-
-  const auto channel = image.GetChannel();
-  MultiChannelWeightComputer multi_channel_weight_computer_(sigma_spatial, sigma_color, channel);
-  const float * center_feature = tex2DLayered(image_texture, col, row);
-
-  float feature_sum[channel];
-  float feature_squared_sum[channel];
-  float bilateral_weight_sum = 0.0f;
-
-  for (int window_row = -window_radius; window_row <= window_radius;
-       window_row += window_step) {
-    for (int window_col = -window_radius; window_col <= window_radius;
-         window_col += window_step) {
-      const float * feature= tex2DLayered(image_texture,
-                                          col + window_col,
-                                          row + window_row);
-      const float multi_channel_weight = multi_channel_weight_computer_.Compute(
-          window_row, window_col, center_feature, feature);
-      for(auto i = 0; i < channel; i++){
-        color_sum[i] += bilateral_weight * feature[i];
-        color_squared_sum[i] += bilateral_weight * feature[i] * feature[i];
-      }
-      bilateral_weight_sum += bilateral_weight;
-    }
-  }
-  for(auto i = 0; i < channel; i++){
-    color_sum[i] /= bilateral_weight;
-    color_squared_sum[i] /= bilateral_weight;
+  const int channel = image.GetDepth();
+  // MultiChannelWeightComputer multi_channel_weight_computer_(sigma_spatial, sigma_color, channel);
+  // const float center_feature[channel];
+  for(int i= 0; i < channel; i++){
+   const float feat = tex2DLayered(image_texture, col, row, i);
+   image.Set(row, col, i, feat);
   }
 
-  image.SetSlice(row, col, center_feature);
-  sum_image.SetSlice(row, col, feature_sum);
-  squared_sum_image.SetSlice(row, col, feature_squared_sum);
+  // float feature_sum[channel];
+  // float feature_squared_sum[channel];
+  // float bilateral_weight_sum = 0.0f;
+
+  // for (int window_row = -window_radius; window_row <= window_radius;
+  //      window_row += window_step) {
+  //   for (int window_col = -window_radius; window_col <= window_radius;
+  //        window_col += window_step) {
+  //     const float feature[channel];
+  //     for(int c = 0; c < channel; c++){
+  //       feature[c] = tex2DLayered(image_texture,
+  //         col + window_col,
+  //         row + window_row, c);
+  //     }
+  //     const float multi_channel_weight = multi_channel_weight_computer_.Compute(
+  //         window_row, window_col, center_feature, feature, channel);
+  //     for(auto i = 0; i < channel; i++){
+  //       feature_sum[i] += multi_channel_weight * feature[i];
+  //       feature_squared_sum[i] += multi_channel_weight * feature[i] * feature[i];
+  //     }
+  //     bilateral_weight_sum += multi_channel_weight;
+  //   }
+  // }
+  // for(auto i = 0; i < channel; i++){
+  //   feature_sum[i] /= multi_channel_weight;
+  //   feature_squared_sum[i] /= multi_channel_weight;
+  // }
+
+  // image.SetSlice(row, col, center_feature);
+  // sum_image.SetSlice(row, col, feature_sum);
+  // squared_sum_image.SetSlice(row, col, feature_squared_sum);
 }
 
 }  // namespace

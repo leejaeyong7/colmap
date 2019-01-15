@@ -29,7 +29,7 @@
 //
 // Author: Johannes L. Schoenberger (jsch-at-demuc-dot-de)
 
-#include "mvs/cnn_image.h"
+#include "mvs/cnn_CNNImage.h"
 
 #include <Eigen/Core>
 
@@ -39,9 +39,9 @@
 namespace colmap {
 namespace mvs {
 
-Image::Image() {}
+CNNImage::CNNImage() {}
 
-Image::Image(const std::string& path, const size_t width, const size_t height,
+CNNImage::CNNImage(const std::string& path, const size_t width, const size_t height,
              const float* K, const float* R, const float* T)
     : path_(path), width_(width), height_(height) {
   memcpy(K_, K, 9 * sizeof(float));
@@ -51,15 +51,15 @@ Image::Image(const std::string& path, const size_t width, const size_t height,
   ComposeInverseProjectionMatrix(K_, R_, T_, inv_P_);
 }
 
-void Image::SetBitmap(const Bitmap& bitmap) {
+void CNNImage::SetBitmap(const Bitmap& bitmap) {
   bitmap_ = bitmap;
   CHECK_EQ(width_, bitmap_.Width());
   CHECK_EQ(height_, bitmap_.Height());
 }
 
-void Image::Rescale(const float factor) { Rescale(factor, factor); }
+void CNNImage::Rescale(const float factor) { Rescale(factor, factor); }
 
-void Image::Rescale(const float factor_x, const float factor_y) {
+void CNNImage::Rescale(const float factor_x, const float factor_y) {
   const size_t new_width = std::round(width_ * factor_x);
   const size_t new_height = std::round(height_ * factor_y);
 
@@ -80,7 +80,7 @@ void Image::Rescale(const float factor_x, const float factor_y) {
   height_ = new_height;
 }
 
-void Image::Downsize(const size_t max_width, const size_t max_height) {
+void CNNImage::Downsize(const size_t max_width, const size_t max_height) {
   if (width_ <= max_width && height_ <= max_height) {
     return;
   }

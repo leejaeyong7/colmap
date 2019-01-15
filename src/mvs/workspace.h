@@ -36,6 +36,7 @@
 #include "mvs/depth_map.h"
 #include "mvs/model.h"
 #include "mvs/normal_map.h"
+#include "util/cnn_feature.h"
 #include "util/bitmap.h"
 #include "util/cache.h"
 
@@ -68,16 +69,19 @@ class Workspace {
   const Options& GetOptions() const;
 
   const Model& GetModel() const;
+  const CNNFeature& GetFeature(const int image_idx);
   const Bitmap& GetBitmap(const int image_idx);
   const DepthMap& GetDepthMap(const int image_idx);
   const NormalMap& GetNormalMap(const int image_idx);
 
   // Get paths to bitmap, depth map, normal map and consistency graph.
   std::string GetBitmapPath(const int image_idx) const;
+  std::string GetFeaturePath(const int image_idx) const;
   std::string GetDepthMapPath(const int image_idx) const;
   std::string GetNormalMapPath(const int image_idx) const;
 
   // Return whether bitmap, depth map, normal map, and consistency graph exist.
+  bool HasFeature(const int image_idx) const;
   bool HasBitmap(const int image_idx) const;
   bool HasDepthMap(const int image_idx) const;
   bool HasNormalMap(const int image_idx) const;
@@ -92,6 +96,7 @@ class Workspace {
     CachedImage& operator=(CachedImage&& other);
     size_t NumBytes() const;
     size_t num_bytes = 0;
+    std::unique_ptr<CNNFeature> feature;
     std::unique_ptr<Bitmap> bitmap;
     std::unique_ptr<DepthMap> depth_map;
     std::unique_ptr<NormalMap> normal_map;

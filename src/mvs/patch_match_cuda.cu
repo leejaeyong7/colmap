@@ -39,6 +39,8 @@
 #include <cstdint>
 #include <sstream>
 
+#include <thrust/device_vector.h>
+
 #include "util/cuda.h"
 #include "util/cudacc.h"
 #include "util/logging.h"
@@ -46,7 +48,6 @@
 // The number of threads per Cuda thread. Warning: Do not change this value,
 // since the templated window sizes rely on this value.
 #define THREADS_PER_BLOCK 32
-
 // We must not include "util/math.h" to avoid any Eigen includes here,
 // since Visual Studio cannot compile some of the Eigen/Boost expressions.
 #ifndef DEG2RAD
@@ -56,8 +57,9 @@
 namespace colmap {
 namespace mvs {
 typedef texture <float, cudaTextureType2DLayered> feature_texture_t;
+thrust::device_vector<cudaTextureObject_t> src_images_texture;
+thrust::device_vector<int> src_texture_indices;
 feature_texture_t ref_image_texture;
-std::map<int, feature_texture_t> src_images_texture;
 texture<float, cudaTextureType2DLayered> src_depth_maps_texture;
 texture<float, cudaTextureType2D> poses_texture;
 
@@ -325,7 +327,10 @@ struct PhotoConsistencyCostComputer {
   const float kMaxCost = 2.0f;
 
   // Image data in local window around patch.
-  float (*local_ref_image)[kChannel] = nullptr;
+  // float (*local_ref_image)[kChannel] = nullptr;
+  // const cudaTextureObject_t * src_textures = nullptr;
+  // const int *src_image_indices = nullptr;
+  // int num_src_images = 0;
 
   // Precomputed array of sum of raw and squared image intensities.
   // float local_ref_sum[num_channels];
@@ -342,7 +347,12 @@ struct PhotoConsistencyCostComputer {
   float depth = 0.0f;
   const float* normal = nullptr;
 
-  __device__ inline float Compute() const {
+  __device__ inline float Compute(
+      float (* local_ref_image)[kChannel],
+      const cudaTextureObject_t * src_textures,
+      const int * src_image_indices,
+      const int num_src_images
+    ) const {
     float tform[9];
     ComposeHomography(src_image_idx, row, col, depth, normal, tform);
 
@@ -383,16 +393,25 @@ struct PhotoConsistencyCostComputer {
     for (int row = -kWindowRadius; row <= kWindowRadius; row += kWindowStep) {
       for (int col = -kWindowRadius; col <= kWindowRadius; col += kWindowStep) {
         const float inv_z = 1.0f / z;
-        const float norm_col_src = inv_z * col_src + 0.5f;
-        const float norm_row_src = inv_z * row_src + 0.5f;
+        float norm_col_src = inv_z * col_src + 0.5f;
+        float norm_row_src = inv_z * row_src + 0.5f;
         const float * ref_feature = local_ref_image[ref_image_idx];
-        auto src_image_texture = src_images_texture.find(src_image_idx)->second;
-        const float * src_feature = tex2DLayered(src_image_texture, norm_col_src,
-                                                 norm_row_src);
+        int src_texture_idx = 0;
+        for(int idx = 0; idx < num_src_images; idx++){
+          if(src_image_indices[idx] == src_image_idx){
+            src_texture_idx = idx;
+            break;
+          }
+        }
+        auto src_image_texture = src_textures[src_texture_idx];
         for(int c = 0; c < kChannel; c++){
-          cov_feature_sum += ref_feature[c] * src_feature[c];
+          const float src_feature = tex2DLayered<float>(src_image_texture,
+                                                        norm_col_src,
+                                                        norm_row_src,
+                                                        c);
+          cov_feature_sum += ref_feature[c] * src_feature;
           ref_feature_sq_sum += ref_feature[c] * ref_feature[c];
-          src_feature_sq_sum += src_feature[c] * src_feature[c];
+          src_feature_sq_sum += src_feature * src_feature;
         }
         total_pixels += 1;
 
@@ -539,7 +558,7 @@ __device__ inline int FindMinCost(const float costs[kNumCosts]) {
 }
 
 template <int kWindowSize, int kChannel>
-__device__ inline void ReadRefImageIntoSharedMemory(float local_image[][],
+__device__ inline void ReadRefImageIntoSharedMemory(float local_image[THREADS_PER_BLOCK * 3 * kWindowSize][kChannel],
                                                     const int row,
                                                     const int col,
                                                     const int thread_id) {
@@ -555,8 +574,13 @@ __device__ inline void ReadRefImageIntoSharedMemory(float local_image[][],
       int c = col - THREADS_PER_BLOCK;
 #pragma unroll
       for (int j = 0; j < 3; ++j) {
-        local_image[thread_id + i * 3 * THREADS_PER_BLOCK +
-                    j * THREADS_PER_BLOCK] = tex2DLayered(ref_image_texture, c, r);
+        int sidx = thread_id;
+        sidx += i * 3 * THREADS_PER_BLOCK;
+        sidx += j * THREADS_PER_BLOCK;
+        for(int channel = 0; channel < kChannel; channel++){
+          local_image[sidx][channel] = tex2DLayered(ref_image_texture,
+                                                    c, r, channel);
+        }
         c += THREADS_PER_BLOCK;
       }
       r += 1;
@@ -566,10 +590,15 @@ __device__ inline void ReadRefImageIntoSharedMemory(float local_image[][],
     for (int i = 1; i < kWindowSize; ++i) {
 #pragma unroll
       for (int j = 0; j < 3; ++j) {
-        local_image[thread_id + (i - 1) * 3 * THREADS_PER_BLOCK +
-                    j * THREADS_PER_BLOCK] =
-            local_image[thread_id + i * 3 * THREADS_PER_BLOCK +
-                        j * THREADS_PER_BLOCK];
+        int sidx = thread_id;
+        sidx += (i - 1) * 3 * THREADS_PER_BLOCK ;
+        sidx += j * THREADS_PER_BLOCK;
+        int tidx = thread_id;
+        tidx += i * 3 * THREADS_PER_BLOCK; 
+        tidx += j * THREADS_PER_BLOCK;
+        for(int channel = 0; channel < kChannel; channel++){
+          local_image[sidx][channel] = local_image[tidx][channel];
+        }
       }
     }
 
@@ -579,8 +608,11 @@ __device__ inline void ReadRefImageIntoSharedMemory(float local_image[][],
     const int i = kWindowSize - 1;
 #pragma unroll
     for (int j = 0; j < 3; ++j) {
-      local_image[thread_id + i * 3 * THREADS_PER_BLOCK +
-                  j * THREADS_PER_BLOCK] = tex2DLayered(ref_image_texture, c, r);
+        const int sidx = thread_id + i * 3 * THREADS_PER_BLOCK + j * THREADS_PER_BLOCK;
+        for(int channel = 0; channel < kChannel; channel++){
+          local_image[sidx][channel] = tex2DLayered(ref_image_texture,
+                                                    c, r, channel);
+        }
       c += THREADS_PER_BLOCK;
     }
   }
@@ -774,16 +806,22 @@ __global__ void ComputeInitialCost(GpuMat<float> cost_map,
                                    const GpuMat<float> normal_map,
                                    const GpuMat<float> ref_sum_image,
                                    const GpuMat<float> ref_squared_sum_image,
+                                   const cudaTextureObject_t* src_textures,
+                                   const int * src_indices,
+                                   const int num_src_images,
                                    const float sigma_spatial,
                                    const float sigma_feature) {
   const int thread_id = threadIdx.x;
   const int col = blockDim.x * blockIdx.x + threadIdx.x;
 
-  __shared__ float local_ref_image[THREADS_PER_BLOCK * 3 * kWindowSize][kChannel];
+   float local_ref_image[THREADS_PER_BLOCK * 3 * kWindowSize][kChannel];
 
   PhotoConsistencyCostComputer<kWindowSize, kWindowStep, kChannel> pcc_computer(
       sigma_spatial, sigma_feature);
-  pcc_computer.local_ref_image = local_ref_image;
+  // pcc_computer.local_ref_image = local_ref_image;
+  // pcc_computer.num_src_images = num_src_images;
+  // pcc_computer.src_image_indices = src_indices;
+  // pcc_computer.src_textures = src_textures;
   pcc_computer.row = 0;
   pcc_computer.col = col;
 
@@ -793,8 +831,8 @@ __global__ void ComputeInitialCost(GpuMat<float> cost_map,
   for (int row = 0; row < cost_map.GetHeight(); ++row) {
     // Note that this must be executed even for pixels outside the borders,
     // since pixels are used in the local neighborhood of the current pixel.
-    ReadRefImageIntoSharedMemory<kWindowSize, kChannel>(local_ref_image, row, col,
-                                              thread_id);
+    ReadRefImageIntoSharedMemory<kWindowSize, kChannel>(local_ref_image, 
+                                                        row, col, thread_id);
 
     if (col < cost_map.GetWidth()) {
       pcc_computer.depth = depth_map.Get(row, col);
@@ -805,7 +843,12 @@ __global__ void ComputeInitialCost(GpuMat<float> cost_map,
 
       for (int image_idx = 0; image_idx < cost_map.GetDepth(); ++image_idx) {
         pcc_computer.src_image_idx = image_idx;
-        cost_map.Set(row, col, image_idx, pcc_computer.Compute());
+        cost_map.Set(row, col, image_idx, pcc_computer.Compute(
+          local_ref_image,
+          src_textures,
+          src_indices,
+          num_src_images
+          ));
       }
 
       pcc_computer.row += 1;
@@ -841,7 +884,10 @@ __global__ void SweepFromTopToBottom(
     GpuMat<float> cost_map, GpuMat<float> depth_map, GpuMat<float> normal_map,
     GpuMat<uint8_t> consistency_mask, GpuMat<float> sel_prob_map,
     const GpuMat<float> prev_sel_prob_map, const GpuMat<float> ref_sum_image,
-    const GpuMat<float> ref_squared_sum_image, const SweepOptions options) {
+    const GpuMat<float> ref_squared_sum_image, 
+    const cudaTextureObject_t * src_textures, const int * src_indices,
+    const int num_src_images,
+    const SweepOptions options) {
   const int thread_id = threadIdx.x;
   const int col = blockDim.x * blockIdx.x + threadIdx.x;
 
@@ -890,11 +936,14 @@ __global__ void SweepFromTopToBottom(
   // size to 2 * THREADS_PER_BLOCK + 1.
 
   // adding channel in local_ref_image
-  __shared__ float local_ref_image[THREADS_PER_BLOCK * 3 * kWindowSize][kChannel];
+   float local_ref_image[THREADS_PER_BLOCK * 3 * kWindowSize][kChannel];
 
   PhotoConsistencyCostComputer<kWindowSize, kWindowStep, kChannel> pcc_computer(
       options.sigma_spatial, options.sigma_color);
-  pcc_computer.local_ref_image = local_ref_image;
+  // pcc_computer.local_ref_image = local_ref_image;
+  // pcc_computer.num_src_images = num_src_images;
+  // pcc_computer.src_image_indices = src_indices;
+  // pcc_computer.src_textures = src_textures;
   pcc_computer.col = col;
 
   struct ParamState {
@@ -922,8 +971,8 @@ __global__ void SweepFromTopToBottom(
   for (int row = 0; row < cost_map.GetHeight(); ++row) {
     // Note that this must be executed even for pixels outside the borders,
     // since pixels are used in the local neighborhood of the current pixel.
-    ReadRefImageIntoSharedMemory<kWindowSize, kChannel>(local_ref_image, row, col,
-                                              thread_id);
+    ReadRefImageIntoSharedMemory<kWindowSize, kChannel>(local_ref_image,
+                                                        row, col, thread_id);
 
     if (col >= cost_map.GetWidth()) {
       continue;
@@ -1035,7 +1084,12 @@ __global__ void SweepFromTopToBottom(
       for (int i = 1; i < kNumCosts; ++i) {
         pcc_computer.depth = depths[i];
         pcc_computer.normal = normals[i];
-        costs[i] += pcc_computer.Compute();
+        costs[i] += pcc_computer.Compute(
+          local_ref_image,
+          src_textures,
+          src_indices,
+          num_src_images
+          );
         if (kGeomConsistencyTerm) {
           costs[i] += options.geom_consistency_regularizer *
                       ComputeGeomConsistencyCost(
@@ -1065,7 +1119,12 @@ __global__ void SweepFromTopToBottom(
         cost = cost_map.Get(row, col, image_idx);
       } else {
         pcc_computer.src_image_idx = image_idx;
-        cost = pcc_computer.Compute();
+        cost = pcc_computer.Compute(
+          local_ref_image,
+          src_textures,
+          src_indices,
+          num_src_images
+          );
         cost_map.Set(row, col, image_idx, cost);
       }
 
@@ -1277,10 +1336,18 @@ void PatchMatchCuda::RunWithWindowSizeAndStep() {
   CudaTimer init_timer;
 
   ComputeCudaConfig();
+  const cudaTextureObject_t * src_textures = 
+    thrust::raw_pointer_cast(src_images_texture.data());
+  const int * src_indices = 
+    thrust::raw_pointer_cast(src_texture_indices.data());
+
+  const int num_src_images = src_texture_indices.size();
   ComputeInitialCost<kWindowSize, kWindowStep, kChannel>
       <<<sweep_grid_size_, sweep_block_size_>>>(
           *cost_map_, *depth_map_, *normal_map_, *ref_image_->sum_image,
-          *ref_image_->squared_sum_image, options_.sigma_spatial,
+          *ref_image_->squared_sum_image, 
+          src_textures, src_indices, num_src_images,
+          options_.sigma_spatial,
           options_.sigma_color);
   CUDA_SYNC_AND_CHECK();
 
@@ -1331,7 +1398,9 @@ void PatchMatchCuda::RunWithWindowSizeAndStep() {
           *global_workspace_, *rand_state_map_, *cost_map_, *depth_map_, \
           *normal_map_, *consistency_mask_, *sel_prob_map_,              \
           *prev_sel_prob_map_, *ref_image_->sum_image,                   \
-          *ref_image_->squared_sum_image, sweep_options);
+          *ref_image_->squared_sum_image,                                \
+          src_textures, src_indices, num_src_images,                     \
+          sweep_options);
 
       if (last_sweep) {
         if (options_.filter) {
@@ -1427,7 +1496,7 @@ void PatchMatchCuda::InitRefImage() {
   // Upload to device.
   ref_image_.reset(new GpuMatRefImage(ref_width_, ref_height_, ref_channel_));
   const std::vector<float> ref_image_array =
-      ref_image.GetData().ConvertToRowMajorArray();
+      ref_image.GetFeature().ConvertToRowMajorArray();
   ref_image_->Filter(ref_image_array.data(), options_.window_radius,
                      options_.window_step, options_.sigma_spatial,
                      options_.sigma_color);
@@ -1447,16 +1516,24 @@ void PatchMatchCuda::InitRefImage() {
 }
 
 void PatchMatchCuda::InitSourceImages() {
-  // TODO: clear all existingsrc textures
-  float max_width = 0.0f;
-  float max_height = 0.0f;
+  // clear all existing src textures / indices
+  for(const auto textureObj:src_images_texture){
+    cudaDestroyTextureObject(textureObj);
+  }
+  src_images_texture.clear();
+  src_texture_indices.clear();
+
+  size_t max_width = 0.0f;
+  size_t max_height = 0.0f;
+
+  // initialize host vectors for source image vector
   for(const auto image_idx:problem_.src_image_idxs){
     const Image& src_image = problem_.images->at(image_idx);
 
     const size_t src_width_ = src_image.GetWidth();
     const size_t src_height_ = src_image.GetHeight();
-    max_width = max((float)src_width_, max_width);
-    max_height = max((float)src_height_, max_height);
+    max_width = max(src_width_, max_width);
+    max_height = max(src_height_, max_height);
     //adding channel information
     const size_t src_channel_ = src_image.GetChannel();
 
@@ -1467,19 +1544,35 @@ void PatchMatchCuda::InitSourceImages() {
 
     // create image array
     const std::vector<float> src_image_array =
-     src_image.GetData().ConvertToRowMajorArray();
+      src_image.GetFeature().ConvertToRowMajorArray();
     src_image_device_->CopyToDevice(src_image_array.data());
 
     // Create texture.
-    feature_texture_t src_image_texture;
-    src_image_texture.addressMode[0] = cudaAddressModeBorder;
-    src_image_texture.addressMode[1] = cudaAddressModeBorder;
-    src_image_texture.addressMode[2] = cudaAddressModeBorder;
-    src_image_texture.filterMode = cudaFilterModePoint;
-    src_image_texture.normalized = false;
+    cudaResourceDesc resDesc;
+    memset(&resDesc, 0, sizeof(resDesc));
+    resDesc.resType = cudaResourceTypeArray;
+    resDesc.res.array.array = src_image_device_->GetPtr();
+
+    cudaTextureDesc texDesc;
+    memset(&texDesc, 0, sizeof(texDesc));
+    texDesc.addressMode[0] = cudaAddressModeBorder;
+    texDesc.addressMode[1] = cudaAddressModeBorder;
+    texDesc.addressMode[2] = cudaAddressModeBorder;
+    texDesc.filterMode = cudaFilterModePoint;
+   
+    cudaTextureObject_t src_image_texture = 0;
     CUDA_SAFE_CALL(
-      cudaBindTextureToArray(src_image_texture, src_image_device_->GetPtr()));
-    src_images_texture.insert(std::pair<int, feature_texture_t>(image_idx, src_image_texture));
+      cudaCreateTextureObject(&src_image_texture, &resDesc, &texDesc, nullptr));
+ 
+    // src_image_texture.addressMode[0] = cudaAddressModeBorder;
+    // src_image_texture.addressMode[1] = cudaAddressModeBorder;
+    // src_image_texture.addressMode[2] = cudaAddressModeBorder;
+    // src_image_texture.filterMode = cudaFilterModePoint;
+    // src_image_texture.normalized = false;
+    // CUDA_SAFE_CALL(
+    //   cudaBindTextureToArray(src_image_texture, src_image_device_->GetPtr()));
+    src_images_texture.push_back(src_image_texture);
+    src_texture_indices.push_back(image_idx);
   }
 
   // Upload source depth maps to device.

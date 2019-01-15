@@ -40,6 +40,7 @@
 #include <vector>
 
 #include "util/bitmap.h"
+#include "util/cnn_feature.h"
 
 namespace colmap {
 namespace mvs {
@@ -47,16 +48,21 @@ namespace mvs {
 class Image {
  public:
   Image();
-  Image(const std::string& path, const size_t width, const size_t height,
+  Image(const std::string& path, const std::string& feature_path,
+        const size_t width, const size_t height,
         const float* K, const float* R, const float* T);
 
   inline size_t GetWidth() const;
   inline size_t GetHeight() const;
+  inline size_t GetChannel() const;
 
   void SetBitmap(const Bitmap& bitmap);
+  void SetFeature(const CNNFeature& feature);
   inline const Bitmap& GetBitmap() const;
+  inline const CNNFeature& GetFeature() const;
 
   inline const std::string& GetPath() const;
+  inline const std::string& GetFeaturePath() const;
   inline const float* GetR() const;
   inline const float* GetT() const;
   inline const float* GetK() const;
@@ -70,14 +76,17 @@ class Image {
 
  private:
   std::string path_;
+  std::string feature_path_;
   size_t width_;
   size_t height_;
+  size_t channel_;
   float K_[9];
   float R_[9];
   float T_[3];
   float P_[12];
   float inv_P_[12];
   Bitmap bitmap_;
+  CNNFeature feature_;
 };
 
 void ComputeRelativePose(const float R1[9], const float T1[3],
@@ -102,9 +111,14 @@ size_t Image::GetWidth() const { return width_; }
 
 size_t Image::GetHeight() const { return height_; }
 
+size_t Image::GetChannel() const { return channel_; }
+
 const Bitmap& Image::GetBitmap() const { return bitmap_; }
 
+const CNNFeature& Image::GetFeature() const {return feature_;}
+
 const std::string& Image::GetPath() const { return path_; }
+const std::string& Image::GetFeaturePath() const { return feature_path_; }
 
 const float* Image::GetR() const { return R_; }
 

@@ -38,22 +38,23 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include "util/cnn_feature.h"
 
 
 namespace colmap {
 namespace mvs {
 
-class Image {
+class CNNImage {
  public:
-  Image();
-  Image(const std::string& path, const size_t width, const size_t height,
+  CNNImage();
+  CNNImage(const std::string& path, const size_t width, const size_t height,
         const float* K, const float* R, const float* T);
 
   inline size_t GetWidth() const;
   inline size_t GetHeight() const;
   inline size_t GetChannel() const;
 
-  inline const CNNData& GetData() const;
+  inline const CNNFeature& GetData() const;
 
   inline const std::string& GetPath() const;
   inline const float* GetR() const;
@@ -76,7 +77,7 @@ class Image {
   float T_[3];
   float P_[12];
   float inv_P_[12];
-  CNNData data_;
+  CNNFeature data_;
 };
 
 void ComputeRelativePose(const float R1[9], const float T1[3],
@@ -97,25 +98,25 @@ void RotatePose(const float RR[9], float R[9], float T[3]);
 // Implementation
 ////////////////////////////////////////////////////////////////////////////////
 
-size_t Image::GetWidth() const { return width_; }
+size_t CNNImage::GetWidth() const { return width_; }
 
-size_t Image::GetHeight() const { return height_; }
+size_t CNNImage::GetHeight() const { return height_; }
 
-const CNNData & Image::GetData() const { return data_; }
+const CNNFeature & CNNImage::GetData() const { return data_; }
 
-const std::string& Image::GetPath() const { return path_; }
+const std::string& CNNImage::GetPath() const { return path_; }
 
-const float* Image::GetR() const { return R_; }
+const float* CNNImage::GetR() const { return R_; }
 
-const float* Image::GetT() const { return T_; }
+const float* CNNImage::GetT() const { return T_; }
 
-const float* Image::GetK() const { return K_; }
+const float* CNNImage::GetK() const { return K_; }
 
-const float* Image::GetP() const { return P_; }
+const float* CNNImage::GetP() const { return P_; }
 
-const float* Image::GetInvP() const { return inv_P_; }
+const float* CNNImage::GetInvP() const { return inv_P_; }
 
-const float* Image::GetViewingDirection() const { return &R_[6]; }
+const float* CNNImage::GetViewingDirection() const { return &R_[6]; }
 
 }  // namespace mvs
 }  // namespace colmap

@@ -83,7 +83,7 @@ struct MultiChannelWeightComputer {
   __device__ inline float Compute(const float row_diff, const float col_diff,
                                   const float * ref_feature,
                                   const float * src_feature, 
-                                  const uint8_t num_channels) const {
+                                  const int num_channels) const {
 
     const float spatial_dist_squared =
         row_diff * row_diff + col_diff * col_diff;
