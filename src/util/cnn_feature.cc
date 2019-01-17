@@ -18,7 +18,7 @@ CNNFeature::CNNFeature(cnpy::NpyArray * data){
   auto shape = data->shape;
   width_ = shape[0];
   height_ = shape[1];
-  channels_ = shape[2]; 
+  channels_ = shape[2];
 }
 
 CNNFeature& CNNFeature::operator=(const CNNFeature& other){
@@ -51,9 +51,9 @@ void CNNFeature::Rescale(const int new_width, const int new_height){
  */
 bool CNNFeature::Read(const std::string& path){
   try{
-    data_ = new cnpy::NpyArray()
-    *data_ = cnpy::npy_load(path);
-    auto shape = data_.shape;
+    data_ = new cnpy::NpyArray();
+    (*data_) = cnpy::npy_load(path);
+    auto shape = data_->shape;
     width_ = shape[0];
     height_ = shape[1];
     channels_ = shape[2];
@@ -82,5 +82,5 @@ int CNNFeature::Width() const { return width_; }
 int CNNFeature::Height() const { return height_; }
 int CNNFeature::Channels() const { return channels_; }
 size_t CNNFeature::NumBytes() const{
-  return data_.word_size;
+  return data_->word_size;
 };

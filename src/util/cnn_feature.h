@@ -63,6 +63,7 @@ class CNNFeature {
   // Create CNNFeature object from existing FreeImage CNNFeature object. Note that
   // this class takes ownership of the object.
   explicit CNNFeature(cnpy::NpyArray * data);
+  ~CNNFeature();
 
   // Copy assignment.
   CNNFeature& operator=(const CNNFeature& other);
