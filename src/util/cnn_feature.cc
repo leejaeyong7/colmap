@@ -3,7 +3,6 @@
 using namespace colmap;
 
 CNNFeature::CNNFeature(){
-
 }
 
 CNNFeature::CNNFeature(const CNNFeature& other){
@@ -14,11 +13,11 @@ CNNFeature::CNNFeature(const CNNFeature& other){
 }
 
 CNNFeature::CNNFeature(cnpy::NpyArray * data){
-  data_ = data;
+  data_.reset(data);
   auto shape = data->shape;
-  width_ = shape[0];
-  height_ = shape[1];
-  channels_ = shape[2];
+  channels_ = shape[0];
+  width_ = shape[1];
+  height_ = shape[2];
 }
 
 CNNFeature& CNNFeature::operator=(const CNNFeature& other){
@@ -27,11 +26,6 @@ CNNFeature& CNNFeature::operator=(const CNNFeature& other){
   height_ = other.height_;
   channels_ = other.channels_;
   return *this;
-}
-CNNFeature::~CNNFeature(){
-  if(data_ != nullptr){
-    delete data_;
-  }
 }
 
 std::vector<float> CNNFeature::ConvertToRowMajorArray()const{
@@ -51,12 +45,12 @@ void CNNFeature::Rescale(const int new_width, const int new_height){
  */
 bool CNNFeature::Read(const std::string& path){
   try{
-    data_ = new cnpy::NpyArray();
-    (*data_) = cnpy::npy_load(path);
+    data_ = std::make_shared<cnpy::NpyArray>();
+    *data_ = cnpy::npy_load(path);
     auto shape = data_->shape;
-    width_ = shape[0];
-    height_ = shape[1];
-    channels_ = shape[2];
+    channels_ = shape[0];
+    width_ = shape[1];
+    height_ = shape[2];
     return true;
   } catch(std::exception& e){
     std::cout<<e.what()<<std::endl;

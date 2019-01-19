@@ -40,8 +40,6 @@
 #include <sstream>
 
 #include <thrust/device_vector.h>
-#include <iostream>
-#include <stdio.h>
 
 #include "util/cuda.h"
 #include "util/cudacc.h"
@@ -317,131 +315,6 @@ __device__ inline void ComposeHomography(const int image_idx, const int row,
 }
 
 
-  /*__device__ PhotoConsistencyCostComputer(const float sigma_spatial,*/
-  /*                                        const float sigma_color)*/
-  /*    : bilateral_weight_computer_(sigma_spatial, sigma_color) {}*/
-
-  /*// Maximum photo consistency cost as 1 - min(NCC).*/
-  /*const float kMaxCost = 2.0f;*/
-
-  /*// Image data in local window around patch.*/
-  /*const float* local_ref_image = nullptr;*/
-
-  /*// Precomputed sum of raw and squared image intensities.*/
-  /*float local_ref_sum = 0.0f;*/
-  /*float local_ref_squared_sum = 0.0f;*/
-
-  /*// Index of source image.*/
-  /*int src_image_idx = -1;*/
-
-  /*// Center position of patch in reference image.*/
-  /*int row = -1;*/
-  /*int col = -1;*/
-
-  /*// Depth and normal for which to warp patch.*/
-  /*float depth = 0.0f;*/
-  /*const float* normal = nullptr;*/
-
-  /*__device__ inline float Compute() const {*/
-  /*  float tform[9];*/
-  /*  ComposeHomography(src_image_idx, row, col, depth, normal, tform);*/
-
-  /*  float tform_step[9];*/
-  /*  for (int i = 0; i < 9; ++i) {*/
-  /*    tform_step[i] = kWindowStep * tform[i];*/
-  /*  }*/
-
-  /*  const int thread_id = threadIdx.x;*/
-  /*  const int row_start = row - kWindowRadius;*/
-  /*  const int col_start = col - kWindowRadius;*/
-
-  /*  float col_src = tform[0] * col_start + tform[1] * row_start + tform[2];*/
-  /*  float row_src = tform[3] * col_start + tform[4] * row_start + tform[5];*/
-  /*  float z = tform[6] * col_start + tform[7] * row_start + tform[8];*/
-  /*  float base_col_src = col_src;*/
-  /*  float base_row_src = row_src;*/
-  /*  float base_z = z;*/
-
-  /*  int ref_image_idx = THREADS_PER_BLOCK - kWindowRadius + thread_id;*/
-  /*  int ref_image_base_idx = ref_image_idx;*/
-
-  /*  const float ref_center_color =*/
-  /*      local_ref_image[ref_image_idx + kWindowRadius * 3 * THREADS_PER_BLOCK +*/
-  /*                      kWindowRadius];*/
-  /*  const float ref_color_sum = local_ref_sum;*/
-  /*  const float ref_color_squared_sum = local_ref_squared_sum;*/
-  /*  float src_color_sum = 0.0f;*/
-  /*  float src_color_squared_sum = 0.0f;*/
-  /*  float src_ref_color_sum = 0.0f;*/
-  /*  float bilateral_weight_sum = 0.0f;*/
-
-  /*  for (int row = -kWindowRadius; row <= kWindowRadius; row += kWindowStep) {*/
-  /*    for (int col = -kWindowRadius; col <= kWindowRadius; col += kWindowStep) {*/
-  /*      const float inv_z = 1.0f / z;*/
-  /*      const float norm_col_src = inv_z * col_src + 0.5f;*/
-  /*      const float norm_row_src = inv_z * row_src + 0.5f;*/
-  /*      const float ref_color = local_ref_image[ref_image_idx];*/
-  /*      const float src_color = tex2DLayered(src_images_texture, norm_col_src,*/
-  /*                                           norm_row_src, src_image_idx);*/
-
-  /*      const float bilateral_weight = bilateral_weight_computer_.Compute(*/
-  /*          row, col, ref_center_color, ref_color);*/
-
-  /*      const float bilateral_weight_src = bilateral_weight * src_color;*/
-
-  /*      src_color_sum += bilateral_weight_src;*/
-  /*      src_color_squared_sum += bilateral_weight_src * src_color;*/
-  /*      src_ref_color_sum += bilateral_weight_src * ref_color;*/
-  /*      bilateral_weight_sum += bilateral_weight;*/
-
-  /*      ref_image_idx += kWindowStep;*/
-
-  /*      // Accumulate warped source coordinates per row to reduce numerical*/
-  /*      // errors. Note that this is necessary since coordinates usually are in*/
-  /*      // the order of 1000s as opposed to the color values which are*/
-  /*      // normalized to the range [0, 1].*/
-  /*      col_src += tform_step[0];*/
-  /*      row_src += tform_step[3];*/
-  /*      z += tform_step[6];*/
-  /*    }*/
-
-  /*    ref_image_base_idx += kWindowStep * 3 * THREADS_PER_BLOCK;*/
-  /*    ref_image_idx = ref_image_base_idx;*/
-
-  /*    base_col_src += tform_step[1];*/
-  /*    base_row_src += tform_step[4];*/
-  /*    base_z += tform_step[7];*/
-
-  /*    col_src = base_col_src;*/
-  /*    row_src = base_row_src;*/
-  /*    z = base_z;*/
-  /*  }*/
-
-  /*  const float inv_bilateral_weight_sum = 1.0f / bilateral_weight_sum;*/
-  /*  src_color_sum *= inv_bilateral_weight_sum;*/
-  /*  src_color_squared_sum *= inv_bilateral_weight_sum;*/
-  /*  src_ref_color_sum *= inv_bilateral_weight_sum;*/
-
-  /*  const float ref_color_var =*/
-  /*      ref_color_squared_sum - ref_color_sum * ref_color_sum;*/
-  /*  const float src_color_var =*/
-  /*      src_color_squared_sum - src_color_sum * src_color_sum;*/
-
-  /*  // Based on Jensen's Inequality for convex functions, the variance*/
-  /*  // should always be larger than 0. Do not make this threshold smaller.*/
-  /*  const float kMinVar = 1e-5f;*/
-  /*  if (ref_color_var < kMinVar || src_color_var < kMinVar) {*/
-  /*    return kMaxCost;*/
-  /*  } else {*/
-  /*    const float src_ref_color_covar =*/
-  /*        src_ref_color_sum - ref_color_sum * src_color_sum;*/
-  /*    const float src_ref_color_var = sqrt(ref_color_var * src_color_var);*/
-  /*    return max(0.0f,*/
-  /*               min(kMaxCost, 1.0f - src_ref_color_covar / src_ref_color_var));*/
-  /*  }*/
-  /*}*/
-
-
 // The return values is 1 - NCC, so the range is [0, 2], the smaller the
 // value, the better the color consistency.
 template <int kWindowSize, int kWindowStep, int kChannel>
@@ -455,29 +328,14 @@ struct PhotoConsistencyCostComputer {
   // Maximum photo consistency cost as 1 - min(NCC).
   const float kMaxCost = 2.0f;
 
-  /*// Image data in local window around patch.*/
-  /*const float* local_ref_image = nullptr;*/
+  // Image data in local window around patch.
+  float (*local_ref_image)[kChannel] = nullptr;
+  const cudaTextureObject_t * src_textures = nullptr;
+  int num_src_images = 0;
 
-  /*// Precomputed sum of raw and squared image intensities.*/
-  /*float local_ref_sum = 0.0f;*/
-  /*float local_ref_squared_sum = 0.0f;*/
-
-  /*// Index of source image.*/
-  /*int src_image_idx = -1;*/
-
-  /*// Center position of patch in reference image.*/
-  /*int row = -1;*/
-  /*int col = -1;*/
-
-
-   // Image data in local window around patch.
-   float (*local_ref_image)[kChannel] = nullptr;
-   const cudaTextureObject_t * src_textures = nullptr;
-   int num_src_images = 0;
-
-   // Precomputed array of sum of raw and squared image intensities.
-   float local_ref_sum[kChannel];
-   float local_ref_squared_sum[kChannel];
+  // Precomputed array of sum of raw and squared image intensities.
+  float local_ref_sum[kChannel];
+  float local_ref_squared_sum[kChannel];
 
   // Index of source image.
   int src_image_idx = -1;
@@ -485,6 +343,7 @@ struct PhotoConsistencyCostComputer {
   // Center position of patch in reference image.
   int row = -1;
   int col = -1;
+
 
   // Depth and normal for which to warp patch.
   float depth = 0.0f;
@@ -500,6 +359,7 @@ struct PhotoConsistencyCostComputer {
       tform_step[i] = kWindowStep * tform[i];
     }
 
+
     const int thread_id = threadIdx.x;
     const int row_start = row - kWindowRadius;
     const int col_start = col - kWindowRadius;
@@ -514,75 +374,38 @@ struct PhotoConsistencyCostComputer {
     int ref_image_idx = THREADS_PER_BLOCK - kWindowRadius + thread_id;
     int ref_image_base_idx = ref_image_idx;
 
-    // const float * ref_center_feature =
-    //     local_ref_image[ref_image_idx + kWindowRadius * 3 * THREADS_PER_BLOCK +
-    //                     kWindowRadius];
-    // const float * ref_color_sum = local_ref_sum;
-    // const float * ref_color_squared_sum = local_ref_squared_sum;
-    // float src_color_sum = 0.0f;
-    // float src_color_squared_sum = 0.0f;
-    // float src_ref_color_sum = 0.0f;
-    // float bilateral_weight_sum = 0.0f;
-
-    float cov_feature_sum = 0.0f;
-    float ref_feature_sq_sum = 0.0f;
-    float src_feature_sq_sum = 0.0f;
-    float total_pixels= 0.0f;
-    /*int test = 1;*/
-
+    const float * ref_center_features = local_ref_image[ref_image_idx + kWindowRadius * 3 * THREADS_PER_BLOCK + kWindowRadius];
+    const float * ref_feature_sum = local_ref_sum;
+    const float * ref_feature_squared_sum = local_ref_squared_sum;
+    float src_feature_sum [kChannel] = {0};
+    float src_feature_squared_sum [kChannel] = {0};
+    float src_ref_feature_sum[kChannel] = {0};
+    float multi_channel_weight_sum[kChannel] = {0} ;
 
     auto src_image_texture = src_textures[src_image_idx];
+
     for (int row = -kWindowRadius; row <= kWindowRadius; row += kWindowStep) {
       for (int col = -kWindowRadius; col <= kWindowRadius; col += kWindowStep) {
         const float inv_z = 1.0f / z;
         float norm_col_src = inv_z * col_src + 0.5f;
         float norm_row_src = inv_z * row_src + 0.5f;
 
-        const float * ref_feature = local_ref_image[ref_image_idx];
-        //int src_texture_idx = src_image_idx;
-        /*printf("Finding Source image index %d \n", src_image_idx);*/
-        /*for(int idx = 0; idx < num_src_images; idx++){*/
-        /*  if(src_image_indices[idx] == src_image_idx){*/
-        /*    src_texture_idx = idx;*/
-        /*    break;*/
-        /*  }*/
-        /*}*/
-        /*if(src_texture_idx == -1){*/
-        /*  printf("Uh oh.. no textures found!\n");*/
-        /*}*/
-        //auto src_image_texture = src_textures[src_texture_idx];
         for(int c = 0; c < kChannel; c++){
+          const float ref_center_feature = ref_center_features[c];
+          const float ref_feature = local_ref_image[ref_image_idx][c];
           const float src_feature = tex2DLayered<float>(src_image_texture,
                                                         norm_col_src,
                                                         norm_row_src,
                                                         c);
-          /*const float src_feature = tex2DLayered<float>(src_image_texture,*/
-          /*                                              norm_col_src,*/
-          /*                                              norm_row_src,*/
-          /*                                              c);*/
-          /*const float src_feature = tex2DLayered<float>(src_image_texture,*/
-          /*                                              norm_col_src,*/
-          /*                                              norm_row_src,*/
-          /*                                              c);*/
-          cov_feature_sum += ref_feature[c] * src_feature;
-          ref_feature_sq_sum += ref_feature[c] * ref_feature[c];
-          // printf("src_feature sample: %f (%f, %f, %d, %d)\n", src_feature, norm_col_src, norm_row_src, src_texture_idx, c);
-          src_feature_sq_sum = src_feature * src_feature;
-          //src_feature_sq_sum += src_feature * src_feature;
+          const float multi_channel_weight = multi_channel_weight_computer_.Compute(row, col, ref_center_feature, ref_feature);
+          const float multi_channel_weight_src = multi_channel_weight * src_feature;
+
+
+          src_feature_sum[c] += multi_channel_weight_src;
+          src_feature_squared_sum[c] += multi_channel_weight_src * src_feature;
+          src_ref_feature_sum[c] += multi_channel_weight_src * ref_feature;
+          multi_channel_weight_sum[c] += multi_channel_weight;
         }
-        total_pixels += 1;
-
-        // const float bilateral_weight = multi_channel_weight_computer_.Compute(
-
-        // const float bilateral_weight = multi_channel_weight_computer_.Compute(
-        //     row, col, ref_center_feature, ref_feature, num_channels);
-
-        // const float bilateral_weight_src = bilateral_weight * src_color;
-
-        // src_color_sum += bilateral_weight_src;
-        // src_color_squared_sum += bilateral_weight_src * src_color;
-        // src_ref_color_sum += bilateral_weight_src * ref_color;
-        // bilateral_weight_sum += bilateral_weight;
 
         ref_image_idx += kWindowStep;
 
@@ -606,38 +429,29 @@ struct PhotoConsistencyCostComputer {
       row_src = base_row_src;
       z = base_z;
     }
-    /*if(test){*/
-    /*  return 0.00;*/
-    /*}*/
-    /*printf("cov_feature_sum: %f\n", cov_feature_sum);*/
-    /*printf("src_feature_sq_sum : %f\n", src_feature_sq_sum);*/
-    /*printf("ref_feature_sq_sum: %f\n", ref_feature_sq_sum);*/
-    /*src_feature_sq_sum = max(src_feature_sq_sum, 1e-15);*/
-    /*ref_feature_sq_sum = max(ref_feature_sq_sum, 1e-15);*/
-    float covar = cov_feature_sum / (sqrt(src_feature_sq_sum) * sqrt(ref_feature_sq_sum));
-    return max(0.0f, 1.0f - covar);
-    // const float inv_bilateral_weight_sum = 1.0f / bilateral_weight_sum;
-    // src_color_sum *= inv_bilateral_weight_sum;
-    // src_color_squared_sum *= inv_bilateral_weight_sum;
-    // src_ref_color_sum *= inv_bilateral_weight_sum;
+    const float kMinVar = 1e-5f;
+    float inv_multi_channel_weight_sum[kChannel];
+    float final_weight = 0.0f;
+    for(auto c = 0; c < kChannel; c++){
+      inv_multi_channel_weight_sum[c] = 1.0f / multi_channel_weight_sum[c];
+      src_feature_sum[c] *= inv_multi_channel_weight_sum[c];
+      src_feature_squared_sum[c] *= inv_multi_channel_weight_sum[c];
+      src_ref_feature_sum[c] *= inv_multi_channel_weight_sum[c];
+      const float ref_feature_var =
+        ref_feature_squared_sum[c] - ref_feature_sum[c] * ref_feature_sum[c];
+      const float src_feature_var =
+        src_feature_squared_sum[c] - src_feature_sum[c] * src_feature_sum[c];
 
-    // const float ref_color_var =
-    //     ref_color_squared_sum - ref_color_sum * ref_color_sum;
-    // const float src_color_var =
-    //     src_color_squared_sum - src_color_sum * src_color_sum;
 
-    // Based on Jensen's Inequality for convex functions, the variance
-    // should always be larger than 0. Do not make this threshold smaller.
-    // const float kMinVar = 1e-5f;
-    // if (ref_color_var < kMinVar || src_color_var < kMinVar) {
-    //   return kMaxCost;
-    // } else {
-    //   const float src_ref_color_covar =
-    //       src_ref_color_sum - ref_color_sum * src_color_sum;
-    //   const float src_ref_color_var = sqrt(ref_color_var * src_color_var);
-    //   return max(0.0f,
-    //              min(kMaxCost, 1.0f - src_ref_color_covar / src_ref_color_var));
-    // }
+      if (ref_feature_var < kMinVar || src_feature_var < kMinVar) {
+        final_weight += kMaxCost;
+      } else {
+        const float src_ref_feature_covar = src_ref_feature_sum[c] - ref_feature_sum[c] * src_feature_sum[c];
+        const float src_ref_feature_var = sqrt(ref_feature_var * src_feature_var);
+        final_weight += max(0.0f, min(kMaxCost, 1.0f - src_ref_feature_covar / src_ref_feature_var));
+      }
+    }
+    return final_weight / kChannel;
   }
 
  private:
@@ -1365,13 +1179,9 @@ PatchMatchCuda::PatchMatchCuda(const PatchMatchOptions& options,
       ref_channel_(32),
       rotation_in_half_pi_(0) {
   SetBestCudaDevice(std::stoi(options_.gpu_index));
-  std::cout<<"Setting Ref Image"<<std::endl;
   InitRefImage();
-  std::cout<<"Setting Source Images"<<std::endl;
   InitSourceImages();
-  std::cout<<"Initializing transforms"<<std::endl;
   InitTransforms();
-  std::cout<<"Initializing workspace memory"<<std::endl;
   InitWorkspaceMemory();
 }
 
@@ -1382,7 +1192,6 @@ PatchMatchCuda::~PatchMatchCuda() {
 }
 
 void PatchMatchCuda::Run() {
-  std::cout<<"Patch match run called"<<std::endl;
 #define CASE_WINDOW_RADIUS(window_radius, window_step, channels)              \
   case window_radius:                                                         \
     switch(channels){                                                         \
@@ -1460,7 +1269,6 @@ std::vector<int> PatchMatchCuda::GetConsistentImageIdxs() const {
 
 template <int kWindowSize, int kWindowStep, int kChannel>
 void PatchMatchCuda::RunWithWindowSizeAndStep() {
-  std::cout<<"Run with window size and step called"<<std::endl;
   // Wait for all initializations to finish.
   CUDA_SYNC_AND_CHECK();
 
@@ -1471,16 +1279,10 @@ void PatchMatchCuda::RunWithWindowSizeAndStep() {
 
   const cudaTextureObject_t * src_textures =
     thrust::raw_pointer_cast(src_images_texture.data());
-  std::cout<<"copying image textures"<<std::endl;
-  CUDA_SYNC_AND_CHECK();
   const int * src_indices =
     thrust::raw_pointer_cast(src_texture_indices.data());
-  std::cout<<"copying image indices"<<std::endl;
-  CUDA_SYNC_AND_CHECK();
 
   const int num_src_images = src_texture_indices.size();
-  std::cout<<"Calling kernel function"<<std::endl;
-  std::cout<<"Cost map shape:"<<std::endl;
   ComputeInitialCost<kWindowSize, kWindowStep, kChannel>
       <<<sweep_grid_size_, sweep_block_size_>>>(
           *cost_map_, *depth_map_, *normal_map_, *ref_image_->sum_image,
@@ -1633,14 +1435,12 @@ void PatchMatchCuda::InitRefImage() {
   ref_channel_ = ref_feature.Channels();
 
   // Upload to device.
-  std::cout<<"Starting Ref image upload"<<std::endl;
   ref_image_.reset(new GpuMatRefImage(ref_width_, ref_height_, ref_channel_));
   const std::vector<float> ref_image_array =
       ref_feature.ConvertToRowMajorArray();
   ref_image_->Filter(ref_image_array.data(), options_.window_radius,
                      options_.window_step, options_.sigma_spatial,
                      options_.sigma_color);
-  std::cout<<"Completed Ref image upload"<<std::endl;
 
   ref_image_device_.reset(
       new CudaArrayWrapper<float>(ref_width_, ref_height_, ref_channel_));
@@ -1654,19 +1454,6 @@ void PatchMatchCuda::InitRefImage() {
   ref_image_texture.normalized = false;
   CUDA_SAFE_CALL(
       cudaBindTextureToArray(ref_image_texture, ref_image_device_->GetPtr()));
-}
-
-__global__ void testTexturePtr(cudaTextureObject_t *my_tex)
-{
-  printf("%d(%lx)\n", my_tex ,my_tex[0]);
-  float test = tex2DLayered<float>(my_tex[0], 0.0f, 0.0f, 0);//by using this the error occurs
-  printf("thread: %d,%d,%d, value: %f\n", threadIdx.x, threadIdx.y, threadIdx.z, test);
-}
-__global__ void testTexture(cudaTextureObject_t my_tex)
-{
-  printf("%d(%lx)\n", my_tex ,&my_tex);
-  float test = tex2DLayered<float>(my_tex, 0.0f, 0.0f, 0);//by using this the error occurs
-  printf("thread: %d,%d,%d, value: %f\n", threadIdx.x, threadIdx.y, threadIdx.z, test);
 }
 
 
