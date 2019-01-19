@@ -32,6 +32,7 @@
 #include "mvs/gpu_mat_ref_image.h"
 
 #include <iostream>
+#include <stdio.h>
 
 #include "util/cudacc.h"
 

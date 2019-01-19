@@ -1693,7 +1693,6 @@ void PatchMatchCuda::InitSourceImages() {
     max_height = max(src_height_, max_height);
     //adding channel information
     const size_t src_channel_ = src_feature.Channels();
-    std::cout<<src_width_<<", "<<src_height_<<", "<<src_channel_<<std::endl;
 
     // Upload to device.
     src_images_data_ptr.emplace_back(
@@ -1724,16 +1723,10 @@ void PatchMatchCuda::InitSourceImages() {
     cudaTextureObject_t texture = 0;
     CUDA_SAFE_CALL(
       cudaCreateTextureObject(&texture, &resDesc, &texDesc, nullptr));
-    std::cout<<"testing texture"<<std::endl;
-    testTexture<<<1, 1>>>(texture);
-    CUDA_SYNC_AND_CHECK();
     src_images_texture.push_back(texture);
     src_texture_indices.push_back(image_idx);
 
-    CUDA_SYNC_AND_CHECK();
-    std::cout<<"After indices push back!"<<std::endl;
   }
-  std::cout<<"Done setting source textures"<<std::endl;
 
   // Upload source depth maps to device.
   if (options_.geom_consistency) {

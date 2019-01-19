@@ -64,7 +64,7 @@ class GpuMatRefImage {
  private:
   const static size_t kBlockDimX = 16;
   const static size_t kBlockDimY = 12;
-  const static size_t kBlockDimZ = 8;
+  const static size_t kBlockDimZ = 1;
 
   size_t width_;
   size_t height_;
