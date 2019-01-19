@@ -35,7 +35,7 @@ CNNFeature::~CNNFeature(){
 }
 
 std::vector<float> CNNFeature::ConvertToRowMajorArray()const{
-  auto v = std::vector<float>();
+  auto v = std::vector<float>(NumBytes());
   v.assign(Data(), Data() + NumBytes());
   return v;
 }
@@ -59,6 +59,7 @@ bool CNNFeature::Read(const std::string& path){
     channels_ = shape[2];
     return true;
   } catch(std::exception& e){
+    std::cout<<e.what()<<std::endl;
     return false;
   }
 }
@@ -70,6 +71,7 @@ bool CNNFeature::Write(const std::string& path) const{
     cnpy::npy_save(path, data, shape);
     return true;
   } catch(std::exception& e){
+    std::cout<<e.what()<<std::endl;
     return false;
   }
 }
@@ -82,5 +84,5 @@ int CNNFeature::Width() const { return width_; }
 int CNNFeature::Height() const { return height_; }
 int CNNFeature::Channels() const { return channels_; }
 size_t CNNFeature::NumBytes() const{
-  return data_->word_size;
+  return Width() * Height() * Channels();
 };

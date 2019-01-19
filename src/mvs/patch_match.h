@@ -40,6 +40,7 @@
 #include "mvs/image.h"
 #include "mvs/model.h"
 #include "mvs/normal_map.h"
+#define MAX_SRC_IMAGE_LIMIT 20
 #ifndef __CUDACC__
 #include "util/threading.h"
 #endif
@@ -137,7 +138,7 @@ struct PatchMatchOptions {
   // Whether to write the consistency graph.
   bool write_consistency_graph = false;
 
-  int channels = 32;
+  int channels = 1;
 
   void Print() const;
   bool Check() const {

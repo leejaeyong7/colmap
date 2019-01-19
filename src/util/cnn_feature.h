@@ -48,6 +48,7 @@
 
 #include "cnpy/cnpy.h"
 #include "util/string.h"
+#include <iostream>
 
 namespace colmap {
 // Wrapper class around FreeImage CNNFeatures.

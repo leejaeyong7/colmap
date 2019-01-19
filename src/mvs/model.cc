@@ -67,14 +67,14 @@ void Model::ReadFromCOLMAP(const std::string& path) {
     CHECK_EQ(camera.ModelId(), PinholeCameraModel::model_id);
 
     const std::string image_path = JoinPaths(path, "images", image.Name());
-    const std::string feature_path = JoinPaths(path, "features", image.Name());
+    const std::string feature_path = JoinPaths(path, "features", image.Name() + ".npy");
     const Eigen::Matrix<float, 3, 3, Eigen::RowMajor> K =
         camera.CalibrationMatrix().cast<float>();
     const Eigen::Matrix<float, 3, 3, Eigen::RowMajor> R =
         QuaternionToRotationMatrix(image.Qvec()).cast<float>();
     const Eigen::Vector3f T = image.Tvec().cast<float>();
 
-    images.emplace_back(image_path, feature_path, 
+    images.emplace_back(image_path, feature_path,
                         camera.Width(), camera.Height(), K.data(),
                         R.data(), T.data());
     image_id_to_idx.emplace(image_id, i);
@@ -296,7 +296,7 @@ bool Model::ReadFromBundlerPMVS(const std::string& path) {
   for (int image_idx = 0; image_idx < num_images; ++image_idx) {
     const std::string image_name = StringPrintf("%08d.jpg", image_idx);
     const std::string image_path = JoinPaths(path, "visualize", image_name);
-    const std::string feature_path = JoinPaths(path, "features", image_name);
+    const std::string feature_path = JoinPaths(path, "features", image_name + ".npy");
 
     float K[9] = {1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f};
     file >> K[0];
@@ -364,7 +364,7 @@ bool Model::ReadFromRawPMVS(const std::string& path) {
   for (int image_idx = 0;; ++image_idx) {
     const std::string image_name = StringPrintf("%08d.jpg", image_idx);
     const std::string image_path = JoinPaths(path, "visualize", image_name);
-    const std::string feature_path = JoinPaths(path, "features", image_name);
+    const std::string feature_path = JoinPaths(path, "features", image_name + ".npy");
 
     if (!ExistsFile(image_path)) {
       break;

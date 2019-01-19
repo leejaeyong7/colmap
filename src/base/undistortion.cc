@@ -161,14 +161,12 @@ void COLMAPUndistorter::Run() {
   PrintHeading1("Image undistortion");
 
   CreateDirIfNotExists(JoinPaths(output_path_, "images"));
-  CreateDirIfNotExists(JoinPaths(output_path_, "features"));
   CreateDirIfNotExists(JoinPaths(output_path_, "sparse"));
   CreateDirIfNotExists(JoinPaths(output_path_, "stereo"));
   CreateDirIfNotExists(JoinPaths(output_path_, "stereo/depth_maps"));
   CreateDirIfNotExists(JoinPaths(output_path_, "stereo/normal_maps"));
   CreateDirIfNotExists(JoinPaths(output_path_, "stereo/consistency_graphs"));
   reconstruction_.CreateImageDirs(JoinPaths(output_path_, "images"));
-  reconstruction_.CreateImageDirs(JoinPaths(output_path_, "features"));
   reconstruction_.CreateImageDirs(JoinPaths(output_path_, "stereo/depth_maps"));
   reconstruction_.CreateImageDirs(
       JoinPaths(output_path_, "stereo/normal_maps"));
@@ -219,14 +217,9 @@ void COLMAPUndistorter::Undistort(const size_t reg_image_idx) const {
   const std::string output_image_path =
       JoinPaths(output_path_, "images", image.Name());
 
-  const std::string output_feature_path =
-      JoinPaths(output_path_, "features", image.Name());
-
   Bitmap distorted_bitmap;
   const std::string input_image_path = JoinPaths(image_path_, image.Name());
   const std::string input_path_ = JoinPaths(image_path_, "..");
-  const std::string feature_path_ = JoinPaths(input_path_, "features");
-  const std::string input_feature_path = JoinPaths(feature_path_, image.Name());
   if (!distorted_bitmap.Read(input_image_path)) {
     std::cerr << "ERROR: Cannot read image at path " << input_image_path
               << std::endl;
@@ -239,9 +232,6 @@ void COLMAPUndistorter::Undistort(const size_t reg_image_idx) const {
                  &undistorted_camera);
 
   undistorted_bitmap.Write(output_image_path);
-  std::ifstream src(input_feature_path, std::ios::binary);
-  std::ofstream dest(output_feature_path, std::ios::binary);
-  dest << src.rdbuf();
 }
 
 void COLMAPUndistorter::WritePatchMatchConfig() const {

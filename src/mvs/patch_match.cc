@@ -74,6 +74,7 @@ void PatchMatchOptions::Print() const {
   PrintOption(filter_min_num_consistent);
   PrintOption(filter_geom_consistency_max_cost);
   PrintOption(write_consistency_graph);
+  PrintOption(channels);
 }
 
 void PatchMatch::Problem::Print() const {
@@ -354,7 +355,8 @@ void PatchMatchController::ReadProblems() {
       }
 
       const size_t eff_max_num_src_images =
-          std::min(src_images.size(), max_num_src_images);
+          std::min(std::min(src_images.size(), max_num_src_images),
+                   (unsigned long)MAX_SRC_IMAGE_LIMIT);
 
       std::partial_sort(src_images.begin(),
                         src_images.begin() + eff_max_num_src_images,

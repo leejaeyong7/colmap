@@ -36,6 +36,7 @@
 
 #include "mvs/cuda_array_wrapper.h"
 #include "mvs/gpu_mat.h"
+#include <iostream>
 
 namespace colmap {
 namespace mvs {
@@ -63,6 +64,7 @@ class GpuMatRefImage {
  private:
   const static size_t kBlockDimX = 16;
   const static size_t kBlockDimY = 12;
+  const static size_t kBlockDimZ = 8;
 
   size_t width_;
   size_t height_;
@@ -77,25 +79,21 @@ class GpuMatRefImage {
 struct MultiChannelWeightComputer {
   __device__ MultiChannelWeightComputer(const float sigma_spatial,
                                         const float sigma_feature)
-      : spatial_normalization_(1.0f / (2.0f * sigma_spatial * sigma_spatial)),
-        feature_normalization_(1.0f / (2.0f * sigma_feature* sigma_feature)) {}
+    : spatial_normalization_(1.0f / (2.0f * sigma_spatial * sigma_spatial)),
+    feature_normalization_(1.0f / (2.0f * sigma_feature* sigma_feature)){}
 
+  /**
+   * assigns multi_channel bilateral weight array
+   */
   __device__ inline float Compute(const float row_diff, const float col_diff,
-                                  const float * ref_feature,
-                                  const float * src_feature, 
-                                  const int num_channels) const {
+                                 const float ref_feature,
+                                 const float src_feature) const {
 
     const float spatial_dist_squared =
-        row_diff * row_diff + col_diff * col_diff;
-
-    float feature_dist_sq = 0.0f;
-    for(auto i = 0; i < num_channels; i++){
-      auto diff = ref_feature[i] + src_feature[i];
-      feature_dist_sq += diff*diff;
-    }
-
+      row_diff * row_diff + col_diff * col_diff;
+    const float diff = ref_feature - src_feature;
     return exp(-spatial_dist_squared * spatial_normalization_ -
-               feature_dist_sq * feature_normalization_);
+               diff * diff * feature_normalization_);
   }
 
  private:

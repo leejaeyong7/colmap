@@ -48,48 +48,39 @@ __global__ void FilterKernel(GpuMat<float> image, GpuMat<float> sum_image,
                              const float sigma_color) {
   const size_t row = blockDim.y * blockIdx.y + threadIdx.y;
   const size_t col = blockDim.x * blockIdx.x + threadIdx.x;
-  if (row >= image.GetHeight() || col >= image.GetWidth()) {
+  const size_t channel = blockDim.z * blockIdx.z + threadIdx.x;
+  if (row >= image.GetHeight() || col >= image.GetWidth() ||
+      channel >= image.GetDepth()) {
     return;
   }
-  const int channel = image.GetDepth();
-  // MultiChannelWeightComputer multi_channel_weight_computer_(sigma_spatial, sigma_color, channel);
-  // const float center_feature[channel];
-  for(int i= 0; i < channel; i++){
-   const float feat = tex2DLayered(image_texture, col, row, i);
-   image.Set(row, col, i, feat);
+  MultiChannelWeightComputer multi_channel_weight_computer_(sigma_spatial,
+                                                            sigma_color);
+
+  const float center_feature = tex2DLayered(image_texture, col, row, channel);
+  float feature_sum = 0.0f;
+  float feature_squared_sum = 0.0f;
+  float bilateral_weight_sum = 0.0f;
+
+  for (int window_row = -window_radius; window_row <= window_radius;
+       window_row += window_step) {
+    for (int window_col = -window_radius; window_col <= window_radius;
+         window_col += window_step) {
+      const float feature =
+        tex2DLayered(image_texture, col + window_col, row + window_row, channel);
+      const float bilateral_weight = multi_channel_weight_computer_.Compute(
+        window_row, window_col, center_feature, feature);
+      feature_sum += bilateral_weight * feature;
+      feature_squared_sum += bilateral_weight * feature * feature;
+      bilateral_weight_sum += bilateral_weight;
+    }
   }
 
-  // float feature_sum[channel];
-  // float feature_squared_sum[channel];
-  // float bilateral_weight_sum = 0.0f;
+  feature_sum /= bilateral_weight_sum;
+  feature_squared_sum /= bilateral_weight_sum;
 
-  // for (int window_row = -window_radius; window_row <= window_radius;
-  //      window_row += window_step) {
-  //   for (int window_col = -window_radius; window_col <= window_radius;
-  //        window_col += window_step) {
-  //     const float feature[channel];
-  //     for(int c = 0; c < channel; c++){
-  //       feature[c] = tex2DLayered(image_texture,
-  //         col + window_col,
-  //         row + window_row, c);
-  //     }
-  //     const float multi_channel_weight = multi_channel_weight_computer_.Compute(
-  //         window_row, window_col, center_feature, feature, channel);
-  //     for(auto i = 0; i < channel; i++){
-  //       feature_sum[i] += multi_channel_weight * feature[i];
-  //       feature_squared_sum[i] += multi_channel_weight * feature[i] * feature[i];
-  //     }
-  //     bilateral_weight_sum += multi_channel_weight;
-  //   }
-  // }
-  // for(auto i = 0; i < channel; i++){
-  //   feature_sum[i] /= multi_channel_weight;
-  //   feature_squared_sum[i] /= multi_channel_weight;
-  // }
-
-  // image.SetSlice(row, col, center_feature);
-  // sum_image.SetSlice(row, col, feature_sum);
-  // squared_sum_image.SetSlice(row, col, feature_squared_sum);
+  image.Set(row, col, channel, center_feature);
+  sum_image.Set(row, col, channel, feature_sum);
+  squared_sum_image.Set(row, col, channel, feature_squared_sum);
 }
 
 }  // namespace
@@ -116,9 +107,10 @@ void GpuMatRefImage::Filter(const float* image_data,
   image_texture.filterMode = cudaFilterModePoint;
   image_texture.normalized = false;
 
-  const dim3 block_size(kBlockDimX, kBlockDimY);
+  const dim3 block_size(kBlockDimX, kBlockDimY, kBlockDimZ);
   const dim3 grid_size((width_ - 1) / block_size.x + 1,
-                       (height_ - 1) / block_size.y + 1);
+                       (height_ - 1) / block_size.y + 1,
+                       (channel_ - 1) / block_size.z + 1);
 
   CUDA_SAFE_CALL(cudaBindTextureToArray(image_texture, image_array.GetPtr()));
   FilterKernel<<<grid_size, block_size>>>(
