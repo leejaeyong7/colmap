@@ -47,13 +47,26 @@ __global__ void FilterKernel(GpuMat<float> image, GpuMat<float> sum_image,
                              const int window_radius, const int window_step,
                              const float sigma_spatial,
                              const float sigma_color) {
-  const size_t row = blockDim.y * blockIdx.y + threadIdx.y;
-  const size_t col = blockDim.x * blockIdx.x + threadIdx.x;
-  const size_t channel = blockDim.z * blockIdx.z + threadIdx.x;
+  const int col = blockDim.x * blockIdx.x + threadIdx.x;
+  const int row = blockDim.y * blockIdx.y + threadIdx.y;
+  const int channel = blockDim.z * blockIdx.z + threadIdx.z;
+  /*const size_t row = blockDim.x * blockIdx.x + threadIdx.x;*/
+  /*const size_t col = blockDim.y * blockIdx.y + threadIdx.y;*/
+  /*const size_t channel = blockDim.z * blockIdx.z + threadIdx.z;*/
+  /*int r = blockDim.x * blockIdx.x + threadIdx.x;*/
+  /*int c = blockDim.y * blockIdx.y + threadIdx.y;*/
+  /*int h = blockDim.z * blockIdx.z + threadIdx.z;*/
   if (row >= image.GetHeight() || col >= image.GetWidth() ||
       channel >= image.GetDepth()) {
     return;
   }
+  /*printf("Filter kernel: %d, %d, %d, blockDim: %d, %d, %d, blockIdx, %d, %d, %d, thread : %d, %d, %d || %d, %d, %d\n", */
+  /*       row, col, channel,*/
+  /*       blockDim.x, blockDim.y, blockDim.z,*/
+  /*       blockIdx.x, blockIdx.y, blockIdx.z,*/
+  /*       threadIdx.x, threadIdx.y, threadIdx.z,*/
+  /*       blockDim.x * blockIdx.x, blockDim.y * blockIdx.y, blockDim.z * blockIdx.z*/
+  /*       );*/
   MultiChannelWeightComputer multi_channel_weight_computer_(sigma_spatial,
                                                             sigma_color);
 

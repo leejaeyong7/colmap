@@ -70,6 +70,7 @@ class PatchMatchCuda {
   void ComputeCudaConfig();
 
   void InitRefImage();
+  void VerifyImages();
   void InitSourceImages();
   void InitTransforms();
   void InitWorkspaceMemory();
