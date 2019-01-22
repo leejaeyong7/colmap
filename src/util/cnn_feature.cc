@@ -9,15 +9,15 @@ CNNFeature::CNNFeature(const CNNFeature& other){
   data_ = other.data_;
   width_ = other.width_;
   height_ = other.height_;
-  channels_ = other.channels_; 
+  channels_ = other.channels_;
 }
 
 CNNFeature::CNNFeature(cnpy::NpyArray * data){
   data_.reset(data);
   auto shape = data->shape;
-  height_ = shape[0];
-  width_ = shape[1];
-  channels_ = shape[2];
+  height_ = shape[1];
+  width_ = shape[2];
+  channels_ = shape[0];
 }
 
 CNNFeature& CNNFeature::operator=(const CNNFeature& other){
@@ -48,9 +48,9 @@ bool CNNFeature::Read(const std::string& path){
     data_ = std::make_shared<cnpy::NpyArray>();
     *data_ = cnpy::npy_load(path);
     auto shape = data_->shape;
-    height_ = shape[0];
-    width_ = shape[1];
-    channels_ = shape[2];
+    height_ = shape[1];
+    width_ = shape[2];
+    channels_ = shape[0];
     return true;
   } catch(std::exception& e){
     std::cout<<e.what()<<std::endl;

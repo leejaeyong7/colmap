@@ -69,8 +69,23 @@ texture<float, cudaTextureType2D> poses_texture;
 __global__ void testTexture(cudaTextureObject_t my_tex)
 {
   printf("%d(%lx)\n", my_tex ,&my_tex);
-  float test = tex2DLayered<float>(my_tex, 0.5f, 0.5f, 0);//by using this the error occurs
-  printf("coord : 0, 0, 0, value: %f\n", test);
+
+  float test0 = tex2DLayered<float>(my_tex, 0, 0, 0);
+  float test1 = tex2DLayered<float>(my_tex, 0, 0, 1);
+  float test2 = tex2DLayered<float>(my_tex, 0, 1, 0);
+  float test3 = tex2DLayered<float>(my_tex, 0, 1, 1);
+  float test4 = tex2DLayered<float>(my_tex, 1, 0, 0);
+  float test5 = tex2DLayered<float>(my_tex, 1, 0, 1);
+  float test6 = tex2DLayered<float>(my_tex, 1, 1, 0);
+  float test7 = tex2DLayered<float>(my_tex, 1, 1, 1);
+  printf("coord : 0, 0, 0, value: %f\n", test0);
+  printf("coord : 0, 0, 1, value: %f\n", test1);
+  printf("coord : 0, 1, 0, value: %f\n", test2);
+  printf("coord : 0, 1, 1, value: %f\n", test3);
+  printf("coord : 1, 0, 0, value: %f\n", test4);
+  printf("coord : 1, 0, 1, value: %f\n", test5);
+  printf("coord : 1, 1, 0, value: %f\n", test6);
+  printf("coord : 1, 1, 1, value: %f\n", test7);
 }
 
 // Calibration of reference image as {fx, cx, fy, cy}.
@@ -1225,6 +1240,10 @@ void PatchMatchCuda::Run() {
     switch(channels){                                                         \
       case 1:                                                                 \
       RunWithWindowSizeAndStep<2 * window_radius + 1, window_step, 1>();      \
+      case 8:                                                                 \
+      RunWithWindowSizeAndStep<2 * window_radius + 1, window_step, 8>();      \
+      case 16:                                                                 \
+      RunWithWindowSizeAndStep<2 * window_radius + 1, window_step, 16>();      \
       break;                                                                  \
       default:                                                                \
       std::cerr << "Error: Channel size not supported" << std::endl;          \
@@ -1481,13 +1500,15 @@ void PatchMatchCuda::InitRefImage() {
 }
 
 void PatchMatchCuda::VerifyImages() {
-  const Image& src_image = problem_.images->at(problem_.src_image_idxs[0]);
+  const Image& src_image = problem_.images->at(problem_.ref_image_idx);
   auto src_feature = src_image.GetFeature();
 
   const size_t src_width_ = src_feature.Width();
   const size_t src_height_ = src_feature.Height();
   //adding channel information
   const size_t src_channel_ = src_feature.Channels();
+  std::cout<<"Index: "<<src_image.GetPath()<<std::endl;
+  std::cout<<"Dimensions: "<<src_width_<<", "<<src_height_<<", "<<src_channel_<<std::endl;
 
   // Upload to device.
   src_images_data_ptr.emplace_back(
@@ -1512,7 +1533,7 @@ void PatchMatchCuda::VerifyImages() {
   texDesc.addressMode[0] = cudaAddressModeBorder;
   texDesc.addressMode[1] = cudaAddressModeBorder;
   texDesc.addressMode[2] = cudaAddressModeBorder;
-  texDesc.filterMode = cudaFilterModeLinear;
+  texDesc.filterMode = cudaFilterModePoint;
   texDesc.normalizedCoords = false;
 
   cudaTextureObject_t texture = 0;

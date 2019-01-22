@@ -602,6 +602,8 @@ void OptionManager::AddPatchMatchStereoOptions() {
                               &patch_match_stereo->cache_size);
   AddAndRegisterDefaultOption("PatchMatchStereo.write_consistency_graph",
                               &patch_match_stereo->write_consistency_graph);
+  AddAndRegisterDefaultOption("PatchMatchStereo.channels",
+                              &patch_match_stereo->channels);
 }
 
 void OptionManager::AddStereoFusionOptions() {

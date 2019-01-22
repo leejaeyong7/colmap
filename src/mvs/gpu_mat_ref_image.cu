@@ -60,13 +60,6 @@ __global__ void FilterKernel(GpuMat<float> image, GpuMat<float> sum_image,
       channel >= image.GetDepth()) {
     return;
   }
-  /*printf("Filter kernel: %d, %d, %d, blockDim: %d, %d, %d, blockIdx, %d, %d, %d, thread : %d, %d, %d || %d, %d, %d\n", */
-  /*       row, col, channel,*/
-  /*       blockDim.x, blockDim.y, blockDim.z,*/
-  /*       blockIdx.x, blockIdx.y, blockIdx.z,*/
-  /*       threadIdx.x, threadIdx.y, threadIdx.z,*/
-  /*       blockDim.x * blockIdx.x, blockDim.y * blockIdx.y, blockDim.z * blockIdx.z*/
-  /*       );*/
   MultiChannelWeightComputer multi_channel_weight_computer_(sigma_spatial,
                                                             sigma_color);
 

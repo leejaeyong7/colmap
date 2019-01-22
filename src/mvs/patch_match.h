@@ -138,7 +138,7 @@ struct PatchMatchOptions {
   // Whether to write the consistency graph.
   bool write_consistency_graph = false;
 
-  int channels = 1;
+  int channels = 16;
 
   void Print() const;
   bool Check() const {
@@ -167,6 +167,7 @@ struct PatchMatchOptions {
     CHECK_OPTION_GE(filter_min_num_consistent, 0);
     CHECK_OPTION_GE(filter_geom_consistency_max_cost, 0.0f);
     CHECK_OPTION_GT(cache_size, 0);
+    CHECK_OPTION_GT(channels, 0);
     return true;
   }
 };
