@@ -81,6 +81,8 @@ __global__ void FilterKernel(GpuMat<float> image, GpuMat<float> sum_image,
       bilateral_weight_sum += bilateral_weight;
     }
   }
+  /* printf("col: %d, row: %d, channel:  %d, center_feature: %f, sum: %f", */
+  /*        col, row, channel, center_feature, feature_sum); */
 
   feature_sum /= bilateral_weight_sum;
   feature_squared_sum /= bilateral_weight_sum;
