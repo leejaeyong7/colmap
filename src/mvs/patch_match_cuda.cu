@@ -353,13 +353,12 @@ struct PhotoConsistencyCostComputer {
   const float kMaxCost = 2.0f;
 
   // Image data in local window around patch.
-  float (*local_ref_image)[kChannel] = nullptr;
-  // float local_ref_image[THREADS_PER_BLOCK * 3 * kWindowSize][kChannel];
+  float *local_ref_image = nullptr;
   const cudaTextureObject_t * src_textures = nullptr;
 
   // Precomputed array of sum of raw and squared image intensities.
-  float local_ref_sum[kChannel];
-  float local_ref_squared_sum[kChannel];
+  float local_ref_sum;
+  float local_ref_squared_sum;
 
   // Index of source image.
   int src_image_idx = -1;
@@ -367,6 +366,7 @@ struct PhotoConsistencyCostComputer {
   // Center position of patch in reference image.
   int row = -1;
   int col = -1;
+  int channel = -1;
 
 
   // Depth and normal for which to warp patch.
@@ -395,21 +395,19 @@ struct PhotoConsistencyCostComputer {
     float base_row_src = row_src;
     float base_z = z;
 
-    int ref_image_idx = THREADS_PER_BLOCK - kWindowRadius + thread_id;
+    const int channel_offset = channel * 3 * THREADS_PER_BLOCK * kWindowSize;
+    int ref_image_idx = THREADS_PER_BLOCK - kWindowRadius + thread_id + channel_offset;
     int ref_image_base_idx = ref_image_idx;
 
-
-    const float * ref_center_features = local_ref_image[ref_image_idx +
-                                                        kWindowRadius * 3 *
-                                                        THREADS_PER_BLOCK +
-                                                        kWindowRadius];
+    const int center_index = ref_image_idx + kWindowRadius * 3 * THREADS_PER_BLOCK + kWindowRadius;
+    const float ref_center_feature = local_ref_image[center_index];
     const float * ref_feature_sum = local_ref_sum;
     const float * ref_feature_squared_sum = local_ref_squared_sum;
 
-    float src_feature_sum [kChannel] = {0};
-    float src_feature_squared_sum [kChannel] = {0};
-    float src_ref_feature_sum[kChannel] = {0};
-    float multi_channel_weight_sum[kChannel] = {0} ;
+    float src_feature_sum = 0;
+    float src_feature_squared_sum = 0;
+    float src_ref_feature_sum = 0;
+    float multi_channel_weight_sum = 0;
 
     auto src_image_texture = src_textures[src_image_idx];
 
@@ -419,26 +417,24 @@ struct PhotoConsistencyCostComputer {
         float norm_col_src = inv_z * col_src + 0.5f;
         float norm_row_src = inv_z * row_src + 0.5f;
 
-        for(int c = 0; c < kChannel; c++){
-          const float ref_center_feature = ref_center_features[c];
-          const float ref_feature = local_ref_image[ref_image_idx][c];
-          const float src_feature = tex2DLayered<float>(src_image_texture,
-                                                        norm_col_src,
-                                                        norm_row_src,
-                                                        c);
-          const float multi_channel_weight =
-            multi_channel_weight_computer_.Compute(row,
-                                                   col,
-                                                   ref_center_feature,
-                                                   ref_feature);
-          const float multi_channel_weight_src = multi_channel_weight * src_feature;
+        const float ref_center_feature = ref_center_feature;
+        const float ref_feature = local_ref_image[ref_image_idx];
+        const float src_feature = tex2DLayered<float>(src_image_texture,
+                                                      norm_col_src,
+                                                      norm_row_src,
+                                                      channel);
+        const float multi_channel_weight =
+          multi_channel_weight_computer_.Compute(row,
+                                                 col,
+                                                 ref_center_feature,
+                                                 ref_feature);
+        const float multi_channel_weight_src = multi_channel_weight * src_feature;
 
-          src_feature_sum[c] += multi_channel_weight_src;
-          src_feature_squared_sum[c] += multi_channel_weight_src * src_feature;
+        src_feature_sum += multi_channel_weight_src;
+        src_feature_squared_sum += multi_channel_weight_src * src_feature;
 
-          src_ref_feature_sum[c] += multi_channel_weight_src * ref_feature;
-          multi_channel_weight_sum[c] += multi_channel_weight;
-        }
+        src_ref_feature_sum += multi_channel_weight_src * ref_feature;
+        multi_channel_weight_sum += multi_channel_weight;
 
         ref_image_idx += kWindowStep;
 
@@ -462,28 +458,28 @@ struct PhotoConsistencyCostComputer {
       row_src = base_row_src;
       z = base_z;
     }
-    const float kMinVar = 1e-5f;
-    float inv_multi_channel_weight_sum[kChannel];
-    float final_weight = 0.0f;
-    for(auto c = 0; c < kChannel; c++){
-      inv_multi_channel_weight_sum[c] = 1.0f / multi_channel_weight_sum[c];
-      src_feature_sum[c] *= inv_multi_channel_weight_sum[c];
-      src_feature_squared_sum[c] *= inv_multi_channel_weight_sum[c];
-      src_ref_feature_sum[c] *= inv_multi_channel_weight_sum[c];
-      const float ref_feature_var =
-        ref_feature_squared_sum[c] - ref_feature_sum[c] * ref_feature_sum[c];
-      const float src_feature_var =
-        src_feature_squared_sum[c] - src_feature_sum[c] * src_feature_sum[c];
 
-      if (ref_feature_var < kMinVar || src_feature_var < kMinVar) {
-        final_weight += kMaxCost;
-      } else {
-        const float src_ref_feature_covar = src_ref_feature_sum[c] - ref_feature_sum[c] * src_feature_sum[c];
-        const float src_ref_feature_var = sqrt(ref_feature_var * src_feature_var);
-        final_weight += max(0.0f, min(kMaxCost, 1.0f - src_ref_feature_covar / src_ref_feature_var));
-      }
+
+    const float kMinVar = 1e-5f;
+    float inv_multi_channel_weight_sum;
+    float final_weight = 0.0f;
+    inv_multi_channel_weight_sum = 1.0f / multi_channel_weight_sum;
+    src_feature_sum *= inv_multi_channel_weight_sum;
+    src_feature_squared_sum *= inv_multi_channel_weight_sum;
+    src_ref_feature_sum *= inv_multi_channel_weight_sum;
+    const float ref_feature_var =
+      ref_feature_squared_sum - ref_feature_sum * ref_feature_sum;
+    const float src_feature_var =
+      src_feature_squared_sum - src_feature_sum * src_feature_sum;
+
+    if (ref_feature_var < kMinVar || src_feature_var < kMinVar) {
+      final_weight += kMaxCost;
+    } else {
+      const float src_ref_feature_covar = src_ref_feature_sum - ref_feature_sum * src_feature_sum;
+      const float src_ref_feature_var = sqrt(ref_feature_var * src_feature_var);
+      final_weight += max(0.0f, min(kMaxCost, 1.0f - src_ref_feature_covar / src_ref_feature_var));
     }
-    return final_weight / kChannel;
+    return final_weight;
   }
 
  private:
@@ -570,9 +566,10 @@ __device__ inline int FindMinCost(const float costs[kNumCosts]) {
 }
 
 template <int kWindowSize, int kChannel>
-__device__ inline void ReadRefImageIntoSharedMemory(float local_image[THREADS_PER_BLOCK * 3 * kWindowSize][kChannel],
+__device__ inline void ReadRefImageIntoSharedMemory(float *local_image,
                                                     const int row,
                                                     const int col,
+                                                    const int channel,
                                                     const int thread_id) {
   // For the first row, read the entire block into shared memory. For all
   // consecutive rows, it is only necessary to shift the rows in shared memory
@@ -586,14 +583,11 @@ __device__ inline void ReadRefImageIntoSharedMemory(float local_image[THREADS_PE
       int c = col - THREADS_PER_BLOCK;
 #pragma unroll
       for (int j = 0; j < 3; ++j) {
-        int sidx = thread_id;
-        sidx += i * 3 * THREADS_PER_BLOCK;
-        sidx += j * THREADS_PER_BLOCK;
-        for(int channel = 0; channel < kChannel; channel++){
-          auto v = tex2DLayered(ref_image_texture, c, r, channel);
-          local_image[sidx][channel] = tex2DLayered(ref_image_texture,
-                                                    c, r, channel);
-        }
+        const int sidx = thread_id + 
+                         i * 3 * THREADS_PER_BLOCK + 
+                         j * THREADS_PER_BLOCK + 
+                         channel * 3 * THREADS_PER_BLOCK * kWindowSize;
+        local_image[sidx] = tex2DLayered(ref_image_texture, c, r, channel);
         c += THREADS_PER_BLOCK;
       }
       r += 1;
@@ -603,15 +597,15 @@ __device__ inline void ReadRefImageIntoSharedMemory(float local_image[THREADS_PE
     for (int i = 1; i < kWindowSize; ++i) {
 #pragma unroll
       for (int j = 0; j < 3; ++j) {
-        int sidx = thread_id;
-        sidx += (i - 1) * 3 * THREADS_PER_BLOCK ;
-        sidx += j * THREADS_PER_BLOCK;
-        int tidx = thread_id;
-        tidx += i * 3 * THREADS_PER_BLOCK; 
-        tidx += j * THREADS_PER_BLOCK;
-        for(int channel = 0; channel < kChannel; channel++){
-          local_image[sidx][channel] = local_image[tidx][channel];
-        }
+        const int sidx = thread_id + 
+                         (i - 1) * 3 * THREADS_PER_BLOCK + 
+                         j * THREADS_PER_BLOCK + 
+                         channel * 3 * THREADS_PER_BLOCK * kWindowSize;
+        const int tidx = thread_id + 
+                         i * 3 * THREADS_PER_BLOCK + 
+                         j * THREADS_PER_BLOCK + 
+                         channel * 3 * THREADS_PER_BLOCK * kWindowSize;
+        local_image[sidx] = local_image[tidx];
       }
     }
 
@@ -621,11 +615,11 @@ __device__ inline void ReadRefImageIntoSharedMemory(float local_image[THREADS_PE
     const int i = kWindowSize - 1;
 #pragma unroll
     for (int j = 0; j < 3; ++j) {
-        const int sidx = thread_id + i * 3 * THREADS_PER_BLOCK + j * THREADS_PER_BLOCK;
-        for(int channel = 0; channel < kChannel; channel++){
-          local_image[sidx][channel] = tex2DLayered(ref_image_texture,
-                                                    c, r, channel);
-        }
+      const int sidx = thread_id + 
+                       i * 3 * THREADS_PER_BLOCK + 
+                       j * THREADS_PER_BLOCK + 
+                       channel * 3 * THREADS_PER_BLOCK * kWindowSize;
+      local_image[sidx] = tex2DLayered(ref_image_texture, c, r, channel);
       c += THREADS_PER_BLOCK;
     }
   }
@@ -824,8 +818,9 @@ __global__ void ComputeInitialCost(GpuMat<float> cost_map,
                                    const float sigma_feature) {
   const int thread_id = threadIdx.x;
   const int col = blockDim.x * blockIdx.x + threadIdx.x;
+  const int channel = threadIdx.z;
 
-  float local_ref_image[THREADS_PER_BLOCK * 3 * kWindowSize][kChannel];
+  __shared__ float local_ref_image[THREADS_PER_BLOCK * 3 * kWindowSize * kChannel];
 
   PhotoConsistencyCostComputer<kWindowSize, kWindowStep, kChannel> pcc_computer(
       sigma_spatial, sigma_feature);
@@ -833,6 +828,7 @@ __global__ void ComputeInitialCost(GpuMat<float> cost_map,
   pcc_computer.src_textures = src_textures;
   pcc_computer.row = 0;
   pcc_computer.col = col;
+  pcc_computer.channel = channel;
 
   float normal[3];
   pcc_computer.normal = normal;
@@ -841,14 +837,14 @@ __global__ void ComputeInitialCost(GpuMat<float> cost_map,
     // Note that this must be executed even for pixels outside the borders,
     // since pixels are used in the local neighborhood of the current pixel.
     ReadRefImageIntoSharedMemory<kWindowSize, kChannel>(local_ref_image,
-                                                        row, col, thread_id);
+                                                        row, col, channel, thread_id);
 
     if (col < cost_map.GetWidth()) {
       pcc_computer.depth = depth_map.Get(row, col);
       normal_map.GetSlice(row, col, normal);
 
-      ref_sum_image.GetSlice(row, col, pcc_computer.local_ref_sum);
-      ref_squared_sum_image.GetSlice(row, col, pcc_computer.local_ref_squared_sum);
+      ref_sum_image.Get(row, col, channel, pcc_computer.local_ref_sum);
+      ref_squared_sum_image.Get(row, col, channel, pcc_computer.local_ref_squared_sum);
 
       for (int image_idx = 0; image_idx < cost_map.GetDepth(); ++image_idx) {
         pcc_computer.src_image_idx = image_idx;
@@ -894,6 +890,7 @@ __global__ void SweepFromTopToBottom(
     const cudaTextureObject_t * src_textures, const SweepOptions options) {
   const int thread_id = threadIdx.x;
   const int col = blockDim.x * blockIdx.x + threadIdx.x;
+  const int channel = threadIdx.z;
 
   // Probability for boundary pixels.
   const float kUniformProb = 0.5f;
@@ -940,13 +937,14 @@ __global__ void SweepFromTopToBottom(
   // size to 2 * THREADS_PER_BLOCK + 1.
 
   // adding channel in local_ref_image
-  float local_ref_image[THREADS_PER_BLOCK * 3 * kWindowSize][kChannel];
+  __shared__ float local_ref_image[THREADS_PER_BLOCK * 3 * kWindowSize * kChannel];
 
   PhotoConsistencyCostComputer<kWindowSize, kWindowStep, kChannel> pcc_computer(
       options.sigma_spatial, options.sigma_color);
   pcc_computer.local_ref_image = local_ref_image;
   pcc_computer.src_textures = src_textures;
   pcc_computer.col = col;
+  pcc_computer.channel = channel;
 
   struct ParamState {
     float depth = 0.0f;
@@ -974,15 +972,15 @@ __global__ void SweepFromTopToBottom(
     // Note that this must be executed even for pixels outside the borders,
     // since pixels are used in the local neighborhood of the current pixel.
     ReadRefImageIntoSharedMemory<kWindowSize, kChannel>(local_ref_image,
-                                                        row, col, thread_id);
+                                                        row, col, channel, thread_id);
 
     if (col >= cost_map.GetWidth()) {
       continue;
     }
 
     pcc_computer.row = row;
-    ref_sum_image.GetSlice(row, col, pcc_computer.local_ref_sum);
-    ref_squared_sum_image.GetSlice(row, col, pcc_computer.local_ref_squared_sum);
+    ref_sum_image.Get(row, col, channel, pcc_computer.local_ref_sum);
+    ref_squared_sum_image.Get(row, col, channel, pcc_computer.local_ref_squared_sum);
 
     // Propagate the depth at which the current ray intersects with the plane
     // of the normal of the previous ray. This helps to better estimate
@@ -1203,7 +1201,7 @@ PatchMatchCuda::PatchMatchCuda(const PatchMatchOptions& options,
       problem_(problem),
       ref_width_(0),
       ref_height_(0),
-      ref_channel_(32),
+      ref_channel_(options_.channels),
       rotation_in_half_pi_(0) {
   SetBestCudaDevice(std::stoi(options_.gpu_index));
   VerifyImages();
@@ -1432,12 +1430,14 @@ void PatchMatchCuda::RunWithWindowSizeAndStep() {
 }
 
 void PatchMatchCuda::ComputeCudaConfig() {
+  // size block (thread) = THREADS_PER_BLOCK
   sweep_block_size_.x = THREADS_PER_BLOCK;
   sweep_block_size_.y = 1;
   sweep_block_size_.z = 1;
+  // num grid = Row * 1 * channels
   sweep_grid_size_.x = (depth_map_->GetWidth() - 1) / THREADS_PER_BLOCK + 1;
   sweep_grid_size_.y = 1;
-  sweep_grid_size_.z = 1;
+  sweep_grid_size_.z = options_.channels;
 
   elem_wise_block_size_.x = THREADS_PER_BLOCK;
   elem_wise_block_size_.y = THREADS_PER_BLOCK;

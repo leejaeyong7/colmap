@@ -72,6 +72,9 @@ class GpuMat {
   __device__ T& GetRef(const size_t row, const size_t col);
   __device__ T& GetRef(const size_t row, const size_t col, const size_t slice);
 
+  __device__ void Add(const size_t row, const size_t col, const T value);
+  __device__ void Add(const size_t row, const size_t col, const size_t slice,
+                      const T value);
   __device__ void Set(const size_t row, const size_t col, const T value);
   __device__ void Set(const size_t row, const size_t col, const size_t slice,
                       const T value);
@@ -234,6 +237,18 @@ template <typename T>
 __device__ T& GpuMat<T>::GetRef(const size_t row, const size_t col,
                                 const size_t slice) {
   return *((T*)((char*)array_ptr_ + pitch_ * (slice * height_ + row)) + col);
+}
+
+template <typename T>
+__device__ void GpuMat<T>::Add(const size_t row, const size_t col,
+                               const T value) {
+  Add(row, col, 0, value);
+}
+
+template <typename T>
+__device__ void GpuMat<T>::Add(const size_t row, const size_t col,
+                               const size_t slice, const T value) {
+  *((T*)((char*)array_ptr_ + pitch_ * (slice * height_ + row)) + col) += value;
 }
 
 template <typename T>

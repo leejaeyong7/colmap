@@ -50,12 +50,6 @@ __global__ void FilterKernel(GpuMat<float> image, GpuMat<float> sum_image,
   const int col = blockDim.x * blockIdx.x + threadIdx.x;
   const int row = blockDim.y * blockIdx.y + threadIdx.y;
   const int channel = blockDim.z * blockIdx.z + threadIdx.z;
-  /*const size_t row = blockDim.x * blockIdx.x + threadIdx.x;*/
-  /*const size_t col = blockDim.y * blockIdx.y + threadIdx.y;*/
-  /*const size_t channel = blockDim.z * blockIdx.z + threadIdx.z;*/
-  /*int r = blockDim.x * blockIdx.x + threadIdx.x;*/
-  /*int c = blockDim.y * blockIdx.y + threadIdx.y;*/
-  /*int h = blockDim.z * blockIdx.z + threadIdx.z;*/
   if (row >= image.GetHeight() || col >= image.GetWidth() ||
       channel >= image.GetDepth()) {
     return;
