@@ -395,11 +395,11 @@ struct PhotoConsistencyCostComputer {
     float base_row_src = row_src;
     float base_z = z;
 
-    int ref_image_idx = THREADS_PER_BLOCK - kWindowRadius + thread_id;
+    const int channel_offset = channel * 3 * THREADS_PER_BLOCK * kWindowSize;
+    int ref_image_idx = THREADS_PER_BLOCK - kWindowRadius + thread_id + channel_offset;
     int ref_image_base_idx = ref_image_idx;
 
 
-    /* const float * ref_center_features = local_ref_image[ref_image_idx + kWindowRadius * 3 * THREADS_PER_BLOCK + kWindowRadius]; */
     float ref_feature_sum = local_ref_sum[channel];
     float ref_feature_squared_sum = local_ref_squared_sum[channel];
 
@@ -409,9 +409,9 @@ struct PhotoConsistencyCostComputer {
     float multi_channel_weight_sum = 0 ;
 
     auto src_image_texture = src_textures[src_image_idx];
-    /* float ref_feature_sum[kChannel] = {0}; */
-    /* float ref_feature_squared_sum[kChannel] = {0}; */
-    const int center_index = THREADS_PER_BLOCK + thread_id + kWindowRadius * 3 * THREADS_PER_BLOCK;
+
+    const float ref_center_feature = local_ref_image[ref_image_idx + kWindowRadius * 3 * THREADS_PER_BLOCK +
+                                                     kWindowRadius];
 
     for (int row = -kWindowRadius; row <= kWindowRadius; row += kWindowStep) {
       for (int col = -kWindowRadius; col <= kWindowRadius; col += kWindowStep) {
@@ -419,23 +419,19 @@ struct PhotoConsistencyCostComputer {
         float norm_col_src = inv_z * col_src + 0.5f;
         float norm_row_src = inv_z * row_src + 0.5f;
 
-        for(int c = 0; c < kChannel; c++){
-          const int channel_offset = c * 3 * THREADS_PER_BLOCK * kWindowSize;
-          const float ref_center_feature = local_ref_image[channel_offset + center_index];
-          const float ref_feature = local_ref_image[ref_image_idx + channel_offset];
-          const float src_feature = tex2DLayered<float>(src_image_texture,
-                                                        norm_col_src,
-                                                        norm_row_src,
-                                                        c);
-          const float multi_channel_weight = multi_channel_weight_computer_.Compute(row, col, ref_center_feature, ref_feature);
-          const float multi_channel_weight_src = multi_channel_weight * src_feature;
+        const float ref_feature = local_ref_image[ref_image_idx];
+        const float src_feature = tex2DLayered<float>(src_image_texture,
+                                                      norm_col_src,
+                                                      norm_row_src,
+                                                      channel);
+        const float multi_channel_weight = multi_channel_weight_computer_.Compute(row, col, ref_center_feature, ref_feature);
+        const float multi_channel_weight_src = multi_channel_weight * src_feature;
 
-          src_feature_sum += multi_channel_weight_src;
-          src_feature_squared_sum += multi_channel_weight_src * src_feature;
+        src_feature_sum += multi_channel_weight_src;
+        src_feature_squared_sum += multi_channel_weight_src * src_feature;
 
-          src_ref_feature_sum += multi_channel_weight_src * ref_feature;
-          multi_channel_weight_sum += multi_channel_weight;
-        }
+        src_ref_feature_sum += multi_channel_weight_src * ref_feature;
+        multi_channel_weight_sum += multi_channel_weight;
 
         ref_image_idx += kWindowStep;
 
@@ -856,7 +852,7 @@ __global__ void ComputeInitialCost(GpuMat<float> cost_map,
           pcc_computer.channel = channel;
           cost += pcc_computer.Compute();
         }
-        cost_map.Set(row, col, image_idx, cost);
+        cost_map.Set(row, col, image_idx, cost / kChannel);
       }
       pcc_computer.row += 1;
     }
@@ -1091,7 +1087,7 @@ __global__ void SweepFromTopToBottom(
           pcc_computer.channel = channel;
           cost += pcc_computer.Compute();
         }
-        costs[i] += cost;
+        costs[i] += cost / kChannel;
         if (kGeomConsistencyTerm) {
           costs[i] += options.geom_consistency_regularizer *
                       ComputeGeomConsistencyCost(
@@ -1126,7 +1122,7 @@ __global__ void SweepFromTopToBottom(
           pcc_computer.channel = channel;
           tCost += pcc_computer.Compute();
         }
-        cost = tCost;
+        cost = tCost / kChannel;
         cost_map.Set(row, col, image_idx, cost);
       }
 
@@ -1319,17 +1315,11 @@ void PatchMatchCuda::RunWithWindowSizeAndStep() {
   const cudaTextureObject_t * src_textures =
     thrust::raw_pointer_cast(src_images_texture.data());
   ComputeInitialCost<kWindowSize, kWindowStep, kChannel>
-    <<<1, 1>>>(
+      <<<sweep_grid_size_, sweep_block_size_>>>(
           *cost_map_, *depth_map_, *normal_map_, *ref_image_->sum_image,
           *ref_image_->squared_sum_image, src_textures,
           options_.sigma_spatial,
           options_.sigma_color);
-  /* ComputeInitialCost<kWindowSize, kWindowStep, kChannel> */
-  /*     <<<sweep_grid_size_, sweep_block_size_>>>( */
-  /*         *cost_map_, *depth_map_, *normal_map_, *ref_image_->sum_image, */
-  /*         *ref_image_->squared_sum_image, src_textures, */
-  /*         options_.sigma_spatial, */
-  /*         options_.sigma_color); */
   CUDA_SYNC_AND_CHECK();
 
   init_timer.Print("Initialization");
