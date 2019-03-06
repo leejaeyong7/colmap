@@ -361,6 +361,12 @@ struct PhotoConsistencyCostComputer {
     float col_src = tform[0] * col_start + tform[1] * row_start + tform[2];
     float row_src = tform[3] * col_start + tform[4] * row_start + tform[5];
     float z = tform[6] * col_start + tform[7] * row_start + tform[8];
+
+    float col_src_center = tform[0] * col + tform[1] * row + tform[2];
+    float row_src_center = tform[3] * col + tform[4] * row + tform[5];
+    float z_center = tform[6] * col + tform[7] * row + tform[8];
+
+
     float base_col_src = col_src;
     float base_row_src = row_src;
     float base_z = z;
@@ -371,12 +377,31 @@ struct PhotoConsistencyCostComputer {
     const float ref_center_color =
         local_ref_image[ref_image_idx + kWindowRadius * 3 * THREADS_PER_BLOCK +
                         kWindowRadius];
-    const float ref_color_sum = local_ref_sum;
-    const float ref_color_squared_sum = local_ref_squared_sum;
+    float ref_color_sum = 0.0f;
+    // float ref_color_squared_sum = 0.0f;
     float src_color_sum = 0.0f;
-    float src_color_squared_sum = 0.0f;
-    float src_ref_color_sum = 0.0f;
-    float bilateral_weight_sum = 0.0f;
+    // float src_color_squared_sum = 0.0f;
+    // float src_ref_color_sum = 0.0f;
+    // float bilateral_weight_sum = 0.0f;
+    float color_diff_sum = 0.0f;
+    int num_pixels_count = 0;
+    const int window_width = kWindowSize / kWindowStep;
+
+    const int total_num_pixels = window_width * window_width;
+
+
+
+    float ref_color_array [(kWindowSize / kWindowStep) * (kWindowSize / kWindowStep)];
+    float src_color_array [(kWindowSize / kWindowStep) * (kWindowSize / kWindowStep)];
+
+    const float norm_col_src_center = col_src_center / z_center + 0.5f;
+    const float norm_row_src_center = row_src_center / z_center + 0.5f;
+    const float src_center_color = tex2DLayered(src_images_texture,
+                                                norm_col_src_center,
+                                                norm_row_src_center,
+                                                src_image_idx);
+
+    float census_sum = 0;
 
     for (int row = -kWindowRadius; row <= kWindowRadius; row += kWindowStep) {
       for (int col = -kWindowRadius; col <= kWindowRadius; col += kWindowStep) {
@@ -387,17 +412,25 @@ struct PhotoConsistencyCostComputer {
         const float src_color = tex2DLayered(src_images_texture, norm_col_src,
                                              norm_row_src, src_image_idx);
 
-        const float bilateral_weight = bilateral_weight_computer_.Compute(
-            row, col, ref_center_color, ref_color);
+        const float color_diff = ref_color - src_color;
+        const bool case1 = (ref_color > ref_center_color &&
+                            src_color < src_center_color);
 
-        const float bilateral_weight_src = bilateral_weight * src_color;
+        const bool case2 = (ref_color < ref_center_color &&
+                            src_color > src_center_color);
+        const float census_v = (case1 && case2) ? 1.0f : 0.0f;
 
-        src_color_sum += bilateral_weight_src;
-        src_color_squared_sum += bilateral_weight_src * src_color;
-        src_ref_color_sum += bilateral_weight_src * ref_color;
-        bilateral_weight_sum += bilateral_weight;
+        census_sum += census_v;
+        color_diff_sum += abs(color_diff);
+
+        ref_color_sum += ref_color;
+        src_color_sum += src_color;
 
         ref_image_idx += kWindowStep;
+        ref_color_array[num_pixels_count] = ref_color;
+        src_color_array[num_pixels_count] = src_color;
+        num_pixels_count++;
+
 
         // Accumulate warped source coordinates per row to reduce numerical
         // errors. Note that this is necessary since coordinates usually are in
@@ -420,28 +453,34 @@ struct PhotoConsistencyCostComputer {
       z = base_z;
     }
 
-    const float inv_bilateral_weight_sum = 1.0f / bilateral_weight_sum;
-    src_color_sum *= inv_bilateral_weight_sum;
-    src_color_squared_sum *= inv_bilateral_weight_sum;
-    src_ref_color_sum *= inv_bilateral_weight_sum;
-
-    const float ref_color_var =
-        ref_color_squared_sum - ref_color_sum * ref_color_sum;
-    const float src_color_var =
-        src_color_squared_sum - src_color_sum * src_color_sum;
-
-    // Based on Jensen's Inequality for convex functions, the variance
-    // should always be larger than 0. Do not make this threshold smaller.
-    const float kMinVar = 1e-5f;
-    if (ref_color_var < kMinVar || src_color_var < kMinVar) {
-      return kMaxCost;
-    } else {
-      const float src_ref_color_covar =
-          src_ref_color_sum - ref_color_sum * src_color_sum;
-      const float src_ref_color_var = sqrt(ref_color_var * src_color_var);
-      return max(0.0f,
-                 min(kMaxCost, 1.0f - src_ref_color_covar / src_ref_color_var));
+    // computing variance
+    const float mean_ref = ref_color_sum / (float)total_num_pixels;
+    const float mean_src = src_color_sum / (float)total_num_pixels;
+    float ref_sq_sum = 0.0f;
+    float ref_sum = 0.0f;
+    float src_sq_sum = 0.0f;
+    float src_sum = 0.0f;
+    for(int i = 0; i < total_num_pixels; i++){
+      const auto normalized_ref_color = ref_color_array[i] - mean_ref;
+      const auto normalized_src_color = src_color_array[i] - mean_src;
+      ref_sq_sum += normalized_ref_color * normalized_ref_color;
+      ref_sum += normalized_ref_color;
+      src_sq_sum += normalized_src_color * normalized_src_color;
+      src_sum += normalized_src_color;
     }
+    const float ref_color_var = (ref_sq_sum - ref_sum * ref_sum);
+    const float src_color_var = (src_sq_sum - src_sum * src_sum);
+    const float kMinVar = 1e-4;
+    if(ref_color_var < kMinVar || src_color_var < kMinVar){
+      return kMaxCost;
+    }
+
+    const auto mean_abs_diff = color_diff_sum / total_num_pixels;
+    const auto mean_census = census_sum / total_num_pixels;
+
+    const auto mad_score = 1.0f - exp(-mean_abs_diff / 2.281f) ;
+    const auto census_score = 1.0f - exp(-mean_census / 0.89f) ;
+    return max(0.0f, min(kMaxCost, mad_score + census_score));
   }
 
  private:
@@ -815,7 +854,7 @@ struct SweepOptions {
   float prev_sel_prob_weight = 0.0f;
   float geom_consistency_regularizer = 0.1f;
   float geom_consistency_max_cost = 5.0f;
-  float filter_min_ncc = 0.1f;
+  float filter_min_ncc = 0.7f;
   float filter_min_triangulation_angle = 3.0f;
   int filter_min_num_consistent = 2;
   float filter_geom_consistency_max_cost = 1.0f;
@@ -1161,26 +1200,7 @@ void PatchMatchCuda::Run() {
 #define CASE_WINDOW_STEP(window_step)                                 \
   case window_step:                                                   \
     switch (options_.window_radius) {                                 \
-      CASE_WINDOW_RADIUS(1, window_step)                              \
-      CASE_WINDOW_RADIUS(2, window_step)                              \
-      CASE_WINDOW_RADIUS(3, window_step)                              \
-      CASE_WINDOW_RADIUS(4, window_step)                              \
       CASE_WINDOW_RADIUS(5, window_step)                              \
-      CASE_WINDOW_RADIUS(6, window_step)                              \
-      CASE_WINDOW_RADIUS(7, window_step)                              \
-      CASE_WINDOW_RADIUS(8, window_step)                              \
-      CASE_WINDOW_RADIUS(9, window_step)                              \
-      CASE_WINDOW_RADIUS(10, window_step)                             \
-      CASE_WINDOW_RADIUS(11, window_step)                             \
-      CASE_WINDOW_RADIUS(12, window_step)                             \
-      CASE_WINDOW_RADIUS(13, window_step)                             \
-      CASE_WINDOW_RADIUS(14, window_step)                             \
-      CASE_WINDOW_RADIUS(15, window_step)                             \
-      CASE_WINDOW_RADIUS(16, window_step)                             \
-      CASE_WINDOW_RADIUS(17, window_step)                             \
-      CASE_WINDOW_RADIUS(18, window_step)                             \
-      CASE_WINDOW_RADIUS(19, window_step)                             \
-      CASE_WINDOW_RADIUS(20, window_step)                             \
       default: {                                                      \
         std::cerr << "Error: Window size not supported" << std::endl; \
         break;                                                        \
@@ -1190,7 +1210,6 @@ void PatchMatchCuda::Run() {
 
   switch (options_.window_step) {
     CASE_WINDOW_STEP(1)
-    CASE_WINDOW_STEP(2)
     default: {
       std::cerr << "Error: Window step not supported" << std::endl;
       break;
